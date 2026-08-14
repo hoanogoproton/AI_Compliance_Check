@@ -1,0 +1,1 @@
+python cli.py --video "videos/1.mp4" --conf 0.3 --iou 0.5 --visualize

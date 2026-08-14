@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+
+# Build artifacts
+*.spec
+build/
+dist/
+*.egg-info/
+*.whl
+
+# Project output / generated data
+outputs/
+images/
+videos/
+plans/
+models/
+batch_results_*.csv
+debug_*.png
+
+# Models (large binaries)
+*.pt
+*.part
+*.toml
+*.onnx
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
