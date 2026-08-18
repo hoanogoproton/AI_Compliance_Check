@@ -36,6 +36,14 @@ BEHAVIOR_PARAMS = {
         ("max_gap_frames", int, 0, 300, 10),
         ("min_event_frames", int, 1, 300, 30),
     ],
+    "head_turn": [
+        ("turn_threshold_ratio", float, 0.05, 1.0, 0.25),
+        ("window_frames", int, 1, 600, 90),
+        ("max_turns", int, 1, 50, 3),
+        ("confirmation_frames", int, 1, 300, 30),
+        ("max_gap_frames", int, 0, 300, 10),
+        ("min_event_frames", int, 1, 300, 30),
+    ],
 }
 
 

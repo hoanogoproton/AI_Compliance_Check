@@ -57,3 +57,12 @@ behaviors:
     confirmation_frames: 20
     max_gap_frames: 5
     min_event_frames: 30
+- name: head_turn
+  enabled: true
+  params:
+    turn_threshold_ratio: 0.3
+    window_frames: 90
+    max_turns: 2
+    confirmation_frames: 30
+    max_gap_frames: 10
+    min_event_frames: 30

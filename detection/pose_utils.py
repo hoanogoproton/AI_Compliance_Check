@@ -30,6 +30,26 @@ def compute_head_center(kpts: np.ndarray) -> tuple[float, float] | None:
     return None
 
 
+def compute_head_yaw_offset(kpts: np.ndarray) -> tuple[float, float] | None:
+    nx, ny, nc = get_keypoint(kpts, 0)
+    if nc < KEYPOINT_CONFIDENCE_THRESHOLD:
+        return None
+    head_center = compute_head_center(kpts)
+    if head_center is None:
+        return None
+    hx, hy = head_center
+    le_x, le_y, le_c = get_keypoint(kpts, 3)
+    re_x, re_y, re_c = get_keypoint(kpts, 4)
+    if le_c >= HEAD_KEYPOINT_CONFIDENCE_THRESHOLD and re_c >= HEAD_KEYPOINT_CONFIDENCE_THRESHOLD:
+        head_width = abs(re_x - le_x)
+    else:
+        shoulder_width = compute_shoulder_width(kpts)
+        head_width = shoulder_width * 0.5
+    if head_width < 1e-3:
+        return None
+    return ((nx - hx) / head_width, head_width)
+
+
 def get_wrist_positions(kpts: np.ndarray) -> list[tuple[float, float, float]]:
     result = []
     lx, ly, lc = get_keypoint(kpts, 9)
