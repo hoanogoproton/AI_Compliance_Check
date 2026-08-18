@@ -5,8 +5,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from handhead.config import KEYPOINT_CONFIDENCE_THRESHOLD, SMOOTHING_MIN_PADDING
-from handhead.video_utils import create_video_writer
+from detection.config import KEYPOINT_CONFIDENCE_THRESHOLD, SMOOTHING_MIN_PADDING
+from detection.video_utils import create_video_writer
+from detection.visualizer import draw_zone
 
 SKELETON_CONNECTIONS = [
     (0, 1), (0, 2), (1, 3), (2, 4),
@@ -16,6 +17,28 @@ SKELETON_CONNECTIONS = [
 
 CENTER_ALPHA = 0.25
 SIZE_ALPHA = 0.4
+
+
+def _compute_zone_crop_rect(zones, padding=80, frame_w=0, frame_h=0):
+    all_xs = []
+    all_ys = []
+    for zone in zones:
+        for px, py in zone.points:
+            all_xs.append(px)
+            all_ys.append(py)
+    if not all_xs:
+        return None
+    x1 = max(0, int(min(all_xs)) - padding)
+    y1 = max(0, int(min(all_ys)) - padding)
+    x2 = int(max(all_xs)) + padding
+    y2 = int(max(all_ys)) + padding
+    if frame_w:
+        x2 = min(frame_w, x2)
+    if frame_h:
+        y2 = min(frame_h, y2)
+    w = (x2 - x1) // 2 * 2
+    h = (y2 - y1) // 2 * 2
+    return (x1, y1, x1 + w, y1 + h)
 
 
 def _draw_debug_overlay(crop, bbox, kpts, offset_x, offset_y, frame_idx, detected):
@@ -262,6 +285,7 @@ def export_single_event(
     padding=20,
     debug_keypoints=False,
     video_stem="",
+    zone_export_info=None,
 ):
     output_dir.mkdir(parents=True, exist_ok=True)
     cap = cv2.VideoCapture(video_path)
@@ -273,7 +297,9 @@ def export_single_event(
 
     first_frame = max(0, event.start_frame - context_frames)
     last_frame = min(total_frames - 1, event.end_frame + context_frames)
-    clip_path = output_dir / f"{video_stem}_event_{event_id}_track_{event.track_id}.mp4" if video_stem else output_dir / f"event_{event_id}_track_{event.track_id}.mp4"
+    behavior_name = getattr(event, "behavior_name", "")
+    behavior_prefix = f"{behavior_name}_" if behavior_name else ""
+    clip_path = output_dir / f"{video_stem}_{behavior_prefix}event_{event_id}_track_{event.track_id}.mp4" if video_stem else output_dir / f"{behavior_prefix}event_{event_id}_track_{event.track_id}.mp4"
 
     hand_side = "none"
     if event.hand_sides:
@@ -290,6 +316,7 @@ def export_single_event(
 
     metadata_event = {
         "event_id": event_id,
+        "behavior": behavior_name,
         "track_id": event.track_id,
         "start_frame": event.start_frame,
         "end_frame": event.end_frame,
@@ -314,6 +341,7 @@ def export_single_event(
     smoothed_size = None
     fixed_crop_size = None
     frame_h, frame_w = 0, 0
+    zone_crop_rect = None
 
     for f_idx in range(first_frame, last_frame + 1):
         ret, frame = cap.read()
@@ -321,6 +349,8 @@ def export_single_event(
             break
         if frame_h == 0:
             frame_h, frame_w = frame.shape[:2]
+            if zone_export_info:
+                zone_crop_rect = _compute_zone_crop_rect([zi["zone"] for zi in zone_export_info], frame_w=frame_w, frame_h=frame_h)
 
         frame_data = all_frames_data.get(f_idx, {})
         person_data = frame_data.get(event.track_id)
@@ -329,6 +359,14 @@ def export_single_event(
 
         if last_known_bbox is None:
             continue
+
+        frame_annotated = frame.copy()
+        for zi in (zone_export_info or []):
+            is_active = any(
+                fd.get("behaviors", {}).get(zi["behavior_name"], {}).get("detected", False)
+                for fd in frame_data.values()
+            )
+            frame_annotated = draw_zone(frame_annotated, zi["zone"], is_active)
 
         x1, y1, x2, y2 = last_known_bbox
         cx = (x1 + x2) / 2.0
@@ -369,7 +407,7 @@ def export_single_event(
         cx2 = min(frame_w, cx2)
         cy2 = min(frame_h, cy2)
 
-        crop = frame[cy1:cy2, cx1:cx2]
+        crop = frame_annotated[cy1:cy2, cx1:cx2]
         if crop.size == 0:
             continue
 
@@ -387,11 +425,21 @@ def export_single_event(
         if debug_keypoints and person_data is not None:
             kpts = person_data["keypoints"]
             detected = bool(person_data.get("detected", False))
-            debug_crop = crop.copy()
-            _draw_debug_overlay(debug_crop, last_known_bbox, kpts, cx1, cy1, f_idx, detected)
+            if zone_export_info and zone_crop_rect:
+                zx1, zy1, zx2, zy2 = zone_crop_rect
+                debug_crop = frame_annotated[zy1:zy2, zx1:zx2]
+                if debug_crop.size == 0:
+                    continue
+                _draw_debug_overlay(debug_crop, last_known_bbox, kpts, zx1, zy1, f_idx, detected)
+                dw, dh = debug_crop.shape[1] // 2 * 2, debug_crop.shape[0] // 2 * 2
+                if debug_crop.shape[1] != dw or debug_crop.shape[0] != dh:
+                    debug_crop = cv2.resize(debug_crop, (dw, dh))
+            else:
+                debug_crop = crop.copy()
+                _draw_debug_overlay(debug_crop, last_known_bbox, kpts, cx1, cy1, f_idx, detected)
             if debug_writer is None:
                 debug_path = clip_path.with_stem(clip_path.stem + "_debug")
-                debug_writer = create_video_writer(debug_path, "mp4v", fps, (target_w, target_h))
+                debug_writer = create_video_writer(debug_path, "mp4v", fps, (debug_crop.shape[1], debug_crop.shape[0]))
             debug_writer.write(debug_crop)
 
     if writer is not None:

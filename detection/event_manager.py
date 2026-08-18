@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 
-from handhead.config import CONFIRMATION_FRAMES, MAX_GAP_FRAMES, MIN_EVENT_FRAMES
+from detection.config import CONFIRMATION_FRAMES, MAX_GAP_FRAMES, MIN_EVENT_FRAMES
 
 
 @dataclass
@@ -13,6 +13,8 @@ class Event:
     max_confidence: float
     frames: list[int] = field(default_factory=list)
     hand_sides: list[str] = field(default_factory=list)
+    behavior_name: str = ""
+    metadata: dict = field(default_factory=dict)
 
 
 @dataclass

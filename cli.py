@@ -1,7 +1,7 @@
 import argparse
 from pathlib import Path
 
-from handhead.pipeline import run_pipeline
+from detection.pipeline import run_pipeline
 
 
 def main():
@@ -12,6 +12,16 @@ def main():
         "--video",
         required=True,
         help="Path to input video file (MP4).",
+    )
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="Path to config YAML (optional — defaults to hand_to_head only).",
+    )
+    parser.add_argument(
+        "--define-zones",
+        action="store_true",
+        help="Launch zone definition tool for this video.",
     )
     parser.add_argument(
         "--model",
@@ -53,16 +63,32 @@ def main():
         help="Padding pixels around bounding box crop (default: 20).",
     )
     parser.add_argument(
+        "--gui",
+        action="store_true",
+        help="Launch the GUI application.",
+    )
+    parser.add_argument(
         "--debug-keypoints",
         action="store_true",
         help="Export additional debug clips with keypoint skeleton overlay.",
     )
     args = parser.parse_args()
 
+    if args.gui:
+        from gui.app import main as gui_main
+        gui_main()
+        return 0
+
     video_path = Path(args.video)
     if not video_path.exists():
         print(f"Error: video file not found: {video_path}")
         return 1
+
+    if args.define_zones:
+        from detection.zones.zone_tool import define_zones
+        config_path = args.config or "config.yaml"
+        define_zones(str(video_path.resolve()), config_path)
+        return 0
 
     run_pipeline(
         video_path=str(video_path.resolve()),
@@ -74,6 +100,7 @@ def main():
         context_seconds=args.context_seconds,
         crop_padding=args.crop_padding,
         debug_keypoints=args.debug_keypoints,
+        config_path=args.config,
     )
     return 0
 

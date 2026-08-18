@@ -1,4 +1,4 @@
-from handhead.event_manager import StatefulEventManager
+from detection.event_manager import StatefulEventManager
 
 
 def _d(tid, detected, conf=0.8, side="right"):
@@ -13,16 +13,16 @@ def test_idle_to_active_on_detection():
 
 def test_accumulate_gap_then_cooldown():
     mgr = StatefulEventManager()
-    for i in range(6):
+    for i in range(35):
         mgr.update(i, i / 30.0, _d(1, True))
     all_completed = []
-    for i in range(6, 18):
+    for i in range(35, 48):
         result = mgr.update(i, i / 30.0, _d(1, False))
         all_completed.extend(result)
     assert len(all_completed) == 1
     assert all_completed[0].track_id == 1
     assert all_completed[0].start_frame == 0
-    assert all_completed[0].end_frame == 5
+    assert all_completed[0].end_frame == 34
 
 
 def test_gap_within_max_tolerated():
@@ -47,10 +47,10 @@ def test_discard_short_event():
 def test_multiple_tracks_independent():
     mgr = StatefulEventManager()
     mgr.update(0, 0.0, {1: (True, 0.8, "right"), 2: (True, 0.9, "left")})
-    for i in range(1, 6):
+    for i in range(1, 35):
         mgr.update(i, i / 30.0, {1: (True, 0.8, "right"), 2: (True, 0.9, "left")})
     all_completed = []
-    for i in range(6, 18):
+    for i in range(35, 48):
         result = mgr.update(i, i / 30.0, {1: (False, 0, "none"), 2: (True, 0.9, "left")})
         all_completed.extend(result)
     all_completed.extend(mgr.finalize())
@@ -60,7 +60,7 @@ def test_multiple_tracks_independent():
 
 def test_finalize_flushes_active_events():
     mgr = StatefulEventManager()
-    for i in range(10):
+    for i in range(35):
         mgr.update(i, i / 30.0, _d(1, True))
     remaining = mgr.finalize()
     assert len(remaining) == 1

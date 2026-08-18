@@ -1,6 +1,6 @@
 import numpy as np
 
-from handhead.config import HEAD_KEYPOINT_CONFIDENCE_THRESHOLD, KEYPOINT_CONFIDENCE_THRESHOLD
+from detection.config import HEAD_KEYPOINT_CONFIDENCE_THRESHOLD, KEYPOINT_CONFIDENCE_THRESHOLD
 
 
 def get_keypoint(kpts: np.ndarray, idx: int) -> tuple[float, float, float]:

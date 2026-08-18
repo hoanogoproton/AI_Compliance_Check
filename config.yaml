@@ -1,0 +1,59 @@
+model:
+  path: yolo11n-pose.pt
+  conf: 0.3
+  iou: 0.5
+output:
+  dir: ./outputs
+  visualize: true
+  context_seconds: 5
+  crop_padding: 20
+  debug_keypoints: true
+zones:
+  Zone1:
+    label: Zone1
+    points:
+    - - 728.0
+      - 271.0
+    - - 814.0
+      - 322.0
+    - - 759.0
+      - 388.0
+    - - 690.0
+      - 334.0
+  Leave:
+    label: Leave
+    points:
+    - - 454.0
+      - 467.0
+    - - 596.0
+      - 543.0
+    - - 551.0
+      - 580.0
+    - - 423.0
+      - 519.0
+behaviors:
+- name: hand_to_head
+  enabled: false
+  params:
+    distance_threshold_ratio: 0.9
+    vertical_offset_ratio: 0.2
+    keypoint_conf_threshold: 0.5
+    head_keypoint_conf_threshold: 0.2
+    confirmation_frames: 30
+    max_gap_frames: 10
+    min_event_frames: 30
+- name: leave_zone
+  enabled: true
+  params:
+    zone: Leave
+    min_stay_frames: 11
+    leave_flash_frames: 20
+- name: hand_in_zone
+  enabled: true
+  params:
+    zone: Zone1
+    hand: any
+    min_duration_frames: 5
+    confirmation_frames: 20
+    max_gap_frames: 5
+    min_event_frames: 30

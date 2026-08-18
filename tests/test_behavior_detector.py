@@ -1,7 +1,7 @@
 import numpy as np
 
-from handhead.behavior_detector import is_hand_to_head
-from handhead.pose_utils import (
+from detection.behavior_detector import is_hand_to_head
+from detection.pose_utils import (
     compute_head_center,
     compute_shoulder_width,
     get_keypoint,

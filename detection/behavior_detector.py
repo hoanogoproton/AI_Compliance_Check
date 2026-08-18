@@ -1,7 +1,23 @@
 import numpy as np
 
-from handhead.config import DISTANCE_THRESHOLD_RATIO, KEYPOINT_CONFIDENCE_THRESHOLD, VERTICAL_OFFSET_RATIO
-from handhead.pose_utils import compute_head_center, compute_shoulder_width, get_keypoint
+from detection.config import DISTANCE_THRESHOLD_RATIO, KEYPOINT_CONFIDENCE_THRESHOLD, HEAD_KEYPOINT_CONFIDENCE_THRESHOLD, VERTICAL_OFFSET_RATIO
+from detection.pose_utils import compute_head_center, compute_shoulder_width, get_keypoint
+
+
+# Registry for behavior classes
+_registry: dict[str, type] = {}
+
+
+def register_behavior(name: str):
+    def decorator(cls):
+        _registry[name] = cls
+        cls.name = name
+        return cls
+    return decorator
+
+
+def get_registry() -> dict[str, type]:
+    return _registry
 
 
 def is_hand_to_head(
