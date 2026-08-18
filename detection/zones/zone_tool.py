@@ -22,7 +22,7 @@ def _mouse_callback(event, x, y, flags, param):
         _DRAG_END = [x, y]
 
 
-def define_zones(video_path: str, config_path: str):
+def define_zones(video_path: str, config_path: str, crop_region: tuple | None = None):
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         print(f"Error: Could not open video {video_path}")
@@ -32,6 +32,13 @@ def define_zones(video_path: str, config_path: str):
     if not ret:
         print("Error: Could not read first frame")
         sys.exit(1)
+
+    if crop_region:
+        x, y, w, h = crop_region
+        fh, fw = frame.shape[:2]
+        x_end = min(x + w, fw)
+        y_end = min(y + h, fh)
+        frame = frame[y:y_end, x:x_end]
 
     global _POINTS, _DRAG_START, _DRAG_END
     _POINTS = []

@@ -367,6 +367,7 @@ class StepConfig(QWidget):
                 return False
 
         config = {
+            "crop": (self.main_window.config_data or {}).get("crop"),
             "model": {
                 "path": self.model_path_edit.text(),
                 "conf": self.conf_spin.value(),

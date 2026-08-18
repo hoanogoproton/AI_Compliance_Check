@@ -1,7 +1,7 @@
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel
 
-STEP_NAMES = ["Video", "Config", "Zones", "Run", "Results"]
+STEP_NAMES = ["Video", "Crop", "Config", "Zones", "Run", "Results"]
 
 
 class Stepper(QWidget):

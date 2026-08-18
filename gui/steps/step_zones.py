@@ -16,6 +16,7 @@ class StepZones(QWidget):
         super().__init__()
         self.main_window = main_window
         self._zones: dict[str, Zone] = {}
+        self._crop_region: tuple[int, int, int, int] | None = None
 
         layout = QVBoxLayout(self)
 
@@ -80,6 +81,9 @@ class StepZones(QWidget):
 
     def load_video(self, video_path: str):
         self._load_zones_from_config()
+        raw_crop = (self.main_window.config_data or {}).get("crop")
+        self._crop_region = tuple(raw_crop) if raw_crop else None
+        self.player.set_crop_region(self._crop_region)
         self.player.load(video_path)
 
     def _on_frame(self, frame_idx: int, rgb):

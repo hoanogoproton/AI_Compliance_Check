@@ -22,6 +22,7 @@ class ZoneCanvas(QWidget):
     def set_image(self, image: np.ndarray):
         if image is None:
             return
+        image = np.ascontiguousarray(image)
         h, w, ch = image.shape
         bytes_per_line = ch * w
         qt_image = QImage(image.data, w, h, bytes_per_line, QImage.Format_RGB888).copy()

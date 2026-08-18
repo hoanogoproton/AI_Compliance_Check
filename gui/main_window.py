@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 
 from gui.widgets.stepper import Stepper, STEP_NAMES
 from gui.steps.step_video import StepVideo
+from gui.steps.step_crop import StepCrop
 from gui.steps.step_config import StepConfig
 from gui.steps.step_zones import StepZones
 from gui.steps.step_run import StepRun
@@ -57,12 +58,13 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
 
         self.step_video = StepVideo(self)
+        self.step_crop = StepCrop(self)
         self.step_config = StepConfig(self)
         self.step_zones = StepZones(self)
         self.step_run = StepRun(self)
         self.step_results = StepResults(self)
 
-        for w in [self.step_video, self.step_config, self.step_zones, self.step_run, self.step_results]:
+        for w in [self.step_video, self.step_crop, self.step_config, self.step_zones, self.step_run, self.step_results]:
             self.stack.addWidget(w)
 
         self.stepper.step_selected.connect(self._on_step_selected)
@@ -93,9 +95,11 @@ class MainWindow(QMainWindow):
         self.current_step = index
         self.stepper.set_active(index)
         self.stack.setCurrentIndex(index)
-        if index == 2 and self.current_video:
+        if index == 1 and self.current_video:
+            self.step_crop.load_video(self.current_video)
+        if index == 3 and self.current_video:
             self.step_zones.load_video(self.current_video)
-        if index == 3:
+        if index == 4:
             self.step_run.refresh_preflight()
         self._sync_ui()
 
@@ -110,11 +114,11 @@ class MainWindow(QMainWindow):
             if not self.current_video:
                 self.show_error("Validation", "Please select a video first.")
                 return False
-        elif index == 1:
+        elif index == 2:
             if not self._has_enabled_behavior():
                 self.show_error("Validation", "Please configure and enable at least one behavior.")
                 return False
-        elif index == 3:
+        elif index == 4:
             if not self.current_video:
                 self.show_error("Validation", "Please select a video first.")
                 return False
@@ -135,10 +139,10 @@ class MainWindow(QMainWindow):
         self._sync_ui()
 
     def _on_pipeline_finished(self, output_dir: str):
-        self.stepper.set_completed(3, True)
-        self.step_results.load_results(output_dir)
         self.stepper.set_completed(4, True)
-        self._set_step(4)
+        self.step_results.load_results(output_dir)
+        self.stepper.set_completed(5, True)
+        self._set_step(5)
 
     def on_zones_changed(self):
         self.step_config.refresh_zones()
@@ -146,9 +150,10 @@ class MainWindow(QMainWindow):
 
     def _sync_ui(self):
         self.stepper.set_completed(0, self.current_video is not None)
-        self.stepper.set_completed(1, self._has_enabled_behavior())
+        self.stepper.set_completed(1, True)
+        self.stepper.set_completed(2, self._has_enabled_behavior())
         zones = (self.config_data or {}).get("zones", {})
-        self.stepper.set_completed(2, bool(zones))
+        self.stepper.set_completed(3, bool(zones))
 
         self.back_btn.setEnabled(self.current_step > 0)
         self.next_btn.setEnabled(self.current_step < len(STEP_NAMES) - 1)

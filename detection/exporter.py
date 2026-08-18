@@ -286,6 +286,7 @@ def export_single_event(
     debug_keypoints=False,
     video_stem="",
     zone_export_info=None,
+    crop_region=None,
 ):
     output_dir.mkdir(parents=True, exist_ok=True)
     cap = cv2.VideoCapture(video_path)
@@ -351,6 +352,12 @@ def export_single_event(
             frame_h, frame_w = frame.shape[:2]
             if zone_export_info:
                 zone_crop_rect = _compute_zone_crop_rect([zi["zone"] for zi in zone_export_info], frame_w=frame_w, frame_h=frame_h)
+
+        if crop_region:
+            cx, cy, cw, ch = crop_region
+            x_end = min(cx + cw, frame_w)
+            y_end = min(cy + ch, frame_h)
+            frame = frame[cy:y_end, cx:x_end]
 
         frame_data = all_frames_data.get(f_idx, {})
         person_data = frame_data.get(event.track_id)

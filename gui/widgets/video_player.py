@@ -19,6 +19,7 @@ class VideoPlayer(QWidget):
         self._current_frame = 0
         self._playing = False
         self._show_video = show_video
+        self._crop_region: tuple[int, int, int, int] | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -81,6 +82,9 @@ class VideoPlayer(QWidget):
         self._slider.setMaximum(max(self._total_frames - 1, 0))
         self._current_frame = 0
         self._show_frame(0)
+
+    def set_crop_region(self, crop_region: tuple[int, int, int, int] | None):
+        self._crop_region = crop_region
 
     def play(self):
         if self._cap is None or self._total_frames == 0:
@@ -155,6 +159,13 @@ class VideoPlayer(QWidget):
         if not ret:
             return
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        if self._crop_region:
+            x, y, w, h = self._crop_region
+            fh, fw = rgb.shape[:2]
+            x_end = min(x + w, fw)
+            y_end = min(y + h, fh)
+            rgb = np.ascontiguousarray(rgb[y:y_end, x:x_end])
 
         if self._show_video:
             h, w, ch = rgb.shape

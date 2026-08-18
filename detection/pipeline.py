@@ -42,11 +42,17 @@ def _build_behaviors(config: dict) -> list[BaseBehavior]:
     return behaviors
 
 
-def _reader_worker(cap, read_queue, total_frames):
+def _reader_worker(cap, read_queue, total_frames, crop_region):
     for frame_idx in range(total_frames):
         ret, frame = cap.read()
         if not ret:
             break
+        if crop_region:
+            x, y, w, h = crop_region
+            h_f, w_f = frame.shape[:2]
+            x_end = min(x + w, w_f)
+            y_end = min(y + h, h_f)
+            frame = frame[y:y_end, x:x_end]
         read_queue.put((frame_idx, frame))
     read_queue.put(None)
 
@@ -172,6 +178,13 @@ def run_pipeline(
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise RuntimeError(f"Could not open video: {video_path}")
+
+    crop_region = None
+    if config_path:
+        raw_crop = config.get("crop")
+        if raw_crop:
+            crop_region = tuple(raw_crop)
+
     fps = cap.get(cv2.CAP_PROP_FPS)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     if fps <= 0:
@@ -190,7 +203,14 @@ def run_pipeline(
         ret, first_frame = cap.read()
         if ret:
             cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-            h, w = first_frame.shape[:2]
+            if crop_region:
+                cx, cy, cw, ch = crop_region
+                fh, fw = first_frame.shape[:2]
+                cw = min(cw, fw - cx)
+                ch = min(ch, fh - cy)
+                h, w = ch, cw
+            else:
+                h, w = first_frame.shape[:2]
             writer_size = (w // 2 * 2, h // 2 * 2)
             writer = create_video_writer(
                 output_path / f"{video_stem}_annotated_video.mp4", "mp4v", fps, writer_size
@@ -200,7 +220,7 @@ def run_pipeline(
     write_queue = queue.Queue(maxsize=30)
 
     reader = threading.Thread(
-        target=_reader_worker, args=(cap, read_queue, total_frames), daemon=True
+        target=_reader_worker, args=(cap, read_queue, total_frames, crop_region), daemon=True
     )
     inference = threading.Thread(
         target=_inference_worker,
@@ -237,6 +257,7 @@ def run_pipeline(
                 debug_keypoints=debug_keypoints,
                 video_stem=video_stem,
                 zone_export_info=zones_export,
+                crop_region=crop_region,
             )
             metadata_events.append(meta)
             if log_callback:
@@ -303,6 +324,7 @@ def run_pipeline(
                 debug_keypoints=debug_keypoints,
                 video_stem=video_stem,
                 zone_export_info=zones_export,
+                crop_region=crop_region,
             )
             metadata_events.append(meta)
 
