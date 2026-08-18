@@ -22,6 +22,11 @@ class StepRun(QWidget):
         self._worker: PipelineWorker | None = None
         self._last_output_dir: str | None = None
 
+        self._batch_current_index: int = 0
+        self._batch_results: list[dict] = []
+        self._batch_worker: PipelineWorker | None = None
+        self._batch_last_output_dir: str | None = None
+
         layout = QVBoxLayout(self)
 
         title = QLabel("Step 4: Run Pipeline")
@@ -45,6 +50,13 @@ class StepRun(QWidget):
         self.run_btn.setMinimumHeight(44)
         run_layout.addWidget(self.run_btn)
 
+        self.batch_run_btn = QPushButton("Run All (Batch)")
+        self.batch_run_btn.setObjectName("PrimaryButton")
+        self.batch_run_btn.clicked.connect(self._run_batch)
+        self.batch_run_btn.setMinimumHeight(44)
+        self.batch_run_btn.setVisible(False)
+        run_layout.addWidget(self.batch_run_btn)
+
         self.open_output_btn = QPushButton("Open Output Folder")
         self.open_output_btn.clicked.connect(self._open_output)
         self.open_output_btn.setEnabled(False)
@@ -55,6 +67,10 @@ class StepRun(QWidget):
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         layout.addWidget(self.progress_bar)
+
+        self.batch_progress_label = QLabel("")
+        self.batch_progress_label.setVisible(False)
+        layout.addWidget(self.batch_progress_label)
 
         self.log_group = QGroupBox("Log")
         self.log_group.setCheckable(True)
@@ -118,6 +134,9 @@ class StepRun(QWidget):
             lbl.style().polish(lbl)
 
         self.run_btn.setEnabled(self._preflight_passed(checks))
+        has_csv = self.main_window.csv_data is not None
+        self.batch_run_btn.setVisible(has_csv)
+        self.batch_run_btn.setEnabled(has_csv)
 
     def _run_pipeline(self):
         self.refresh_preflight()
@@ -165,6 +184,115 @@ class StepRun(QWidget):
             config_path=self.main_window.config_path,
         )
 
+    def _run_batch(self):
+        csv_data = self.main_window.csv_data
+        if not csv_data:
+            return
+
+        self._batch_current_index = 0
+        self._batch_results = []
+        self.log_area.clear()
+        self.log_group.setChecked(True)
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.batch_progress_label.setVisible(True)
+        self.batch_run_btn.setEnabled(False)
+        self.run_btn.setEnabled(False)
+        self.log("Batch processing started...\n")
+        self._run_next_in_batch()
+
+    def _run_next_in_batch(self):
+        csv_data = self.main_window.csv_data
+        if self._batch_current_index >= len(csv_data):
+            self._finish_batch()
+            return
+
+        row = csv_data[self._batch_current_index]
+        video_path = row["video"]
+        config_path = row["config"]
+        output_dir = row.get("output_dir") or "./outputs"
+
+        video_name = Path(video_path).name
+        total = len(csv_data)
+        self.batch_progress_label.setText(
+            f"Video {self._batch_current_index + 1}/{total}: {video_name}"
+        )
+
+        try:
+            config = self._load_batch_config(config_path)
+        except Exception as e:
+            self.log(f"ERROR loading config for {video_name}: {e}")
+            self._batch_current_index += 1
+            self._run_next_in_batch()
+            return
+
+        model_path = config.get("model", {}).get("path", "yolo11n-pose.pt")
+        conf = config.get("model", {}).get("conf", 0.3)
+        iou = config.get("model", {}).get("iou", 0.5)
+        visualize = config.get("output", {}).get("visualize", False)
+        context_seconds = config.get("output", {}).get("context_seconds", 5)
+        crop_padding = config.get("output", {}).get("crop_padding", 20)
+        debug_keypoints = config.get("output", {}).get("debug_keypoints", False)
+
+        self._batch_last_output_dir = output_dir
+
+        self._batch_worker = PipelineWorker()
+        self._batch_worker.progress.connect(self._on_batch_progress)
+        self._batch_worker.log.connect(self.log)
+        self._batch_worker.finished.connect(self._on_batch_video_finished)
+        self._batch_worker.error.connect(self._on_batch_video_error)
+
+        self._batch_worker.start(
+            video_path=video_path,
+            model_path=model_path,
+            output_dir=output_dir,
+            conf=conf,
+            iou=iou,
+            visualize=visualize,
+            context_seconds=context_seconds,
+            crop_padding=crop_padding,
+            debug_keypoints=debug_keypoints,
+            config_path=config_path,
+        )
+
+    def _load_batch_config(self, config_path: str) -> dict:
+        from detection.config_loader import load_config
+        return load_config(config_path)
+
+    def _on_batch_progress(self, current: int, total: int):
+        if total > 0:
+            pct = int(current / total * 100)
+            self.progress_bar.setValue(pct)
+        else:
+            self.progress_bar.setRange(0, 0)
+
+    def _on_batch_video_finished(self, result: dict):
+        video_name = Path(result.get("video_path", "")).name
+        self.log(f"Completed: {video_name}")
+        self._batch_results.append(result)
+        self._batch_worker = None
+        self._batch_current_index += 1
+        self._run_next_in_batch()
+
+    def _on_batch_video_error(self, error_msg: str):
+        row = self.main_window.csv_data[self._batch_current_index]
+        video_name = Path(row["video"]).name
+        self.log(f"ERROR: {video_name} — {error_msg}")
+        self._batch_results.append({"error": error_msg, "video_path": row["video"]})
+        self._batch_worker = None
+        self._batch_current_index += 1
+        self._run_next_in_batch()
+
+    def _finish_batch(self):
+        self.batch_progress_label.setText("Batch complete")
+        self.batch_run_btn.setEnabled(True)
+        self.run_btn.setEnabled(True)
+        self.progress_bar.setValue(100)
+        total = len(self._batch_results)
+        success = sum(1 for r in self._batch_results if "output_dir" in r)
+        self.log(f"\nBatch finished: {success}/{total} videos succeeded.")
+        self.open_output_btn.setEnabled(bool(self._batch_last_output_dir))
+
     def _on_progress(self, current: int, total: int):
         if total > 0:
             pct = int(current / total * 100)
@@ -194,5 +322,6 @@ class StepRun(QWidget):
         self._worker = None
 
     def _open_output(self):
-        if self._last_output_dir and Path(self._last_output_dir).exists():
-            subprocess.Popen(["explorer", os.path.normpath(self._last_output_dir)])
+        target = self._batch_last_output_dir or self._last_output_dir
+        if target and Path(target).exists():
+            subprocess.Popen(["explorer", os.path.normpath(target)])

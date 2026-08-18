@@ -1,4 +1,5 @@
 import argparse
+import csv
 from pathlib import Path
 
 from detection.pipeline import run_pipeline
@@ -10,8 +11,13 @@ def main():
     )
     parser.add_argument(
         "--video",
-        required=True,
+        default=None,
         help="Path to input video file (MP4).",
+    )
+    parser.add_argument(
+        "--batch-csv",
+        default=None,
+        help="Path to CSV file mapping videos to configs (video,config,output_dir columns).",
     )
     parser.add_argument(
         "--config",
@@ -79,6 +85,16 @@ def main():
         gui_main()
         return 0
 
+    if args.batch_csv:
+        return _run_batch_csv(args)
+    elif args.video:
+        return _run_single(args)
+    else:
+        parser.print_help()
+        return 1
+
+
+def _run_single(args):
     video_path = Path(args.video)
     if not video_path.exists():
         print(f"Error: video file not found: {video_path}")
@@ -102,6 +118,67 @@ def main():
         debug_keypoints=args.debug_keypoints,
         config_path=args.config,
     )
+    return 0
+
+
+def _run_batch_csv(args):
+    csv_path = Path(args.batch_csv)
+    if not csv_path.exists():
+        print(f"Error: CSV file not found: {csv_path}")
+        return 1
+
+    with open(csv_path, newline="") as f:
+        reader = csv.DictReader(f)
+        if reader.fieldnames != ["video", "config", "output_dir"]:
+            print("Error: CSV must have columns: video,config,output_dir")
+            return 1
+        rows = []
+        for row in reader:
+            video = (row.get("video") or "").strip()
+            config = (row.get("config") or "").strip()
+            output_dir = (row.get("output_dir") or "./outputs").strip()
+            if not video or not config:
+                continue
+            rows.append({"video": video, "config": config, "output_dir": output_dir})
+
+    if not rows:
+        print("Error: CSV file is empty or has no valid rows.")
+        return 1
+
+    total = len(rows)
+    for i, row in enumerate(rows, 1):
+        video_path = Path(row["video"])
+        config_path = row["config"]
+        output_dir = row["output_dir"]
+        print(f"\n[{i}/{total}] Processing: {video_path.name}")
+        print(f"  Config: {config_path}")
+        print(f"  Output: {output_dir}")
+
+        if not video_path.exists():
+            print(f"  SKIP: video not found — {video_path}")
+            continue
+        if not Path(config_path).exists():
+            print(f"  SKIP: config not found — {config_path}")
+            continue
+
+        try:
+            run_pipeline(
+                video_path=str(video_path.resolve()),
+                model_path=args.model,
+                output_dir=output_dir,
+                conf=args.conf,
+                iou=args.iou,
+                visualize=args.visualize,
+                context_seconds=args.context_seconds,
+                crop_padding=args.crop_padding,
+                debug_keypoints=args.debug_keypoints,
+                config_path=config_path,
+            )
+            print(f"  OK: {video_path.name} finished")
+        except Exception as e:
+            print(f"  ERROR: {e}")
+
+    print(f"\nBatch complete: {total} videos processed.")
     return 0
 
 

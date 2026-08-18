@@ -13,6 +13,7 @@ from gui.steps.step_config import StepConfig
 from gui.steps.step_zones import StepZones
 from gui.steps.step_run import StepRun
 from gui.steps.step_results import StepResults
+from detection.config_loader import load_config
 
 
 class MainWindow(QMainWindow):
@@ -27,6 +28,11 @@ class MainWindow(QMainWindow):
         self.config_path: str = str(Path("config.yaml").resolve())
         self.config_data: dict | None = None
         self.current_step: int = 0
+
+        self.csv_data: list[dict] | None = None
+        self.csv_path: str | None = None
+        self.csv_output_dir: str | None = None
+        self._selecting_from_csv: bool = False
 
         central = QWidget()
         root = QHBoxLayout(central)
@@ -133,10 +139,25 @@ class MainWindow(QMainWindow):
         behaviors = self.config_data.get("behaviors", [])
         return any(b.get("enabled", False) for b in behaviors)
 
+    def load_config_from_csv(self, config_path: str, output_dir: str | None = None):
+        config = load_config(config_path)
+        if output_dir:
+            if "output" not in config:
+                config["output"] = {}
+            config["output"]["dir"] = output_dir
+        self.config_path = config_path
+        self.config_data = config
+        self.csv_output_dir = output_dir or config.get("output", {}).get("dir", "./outputs")
+        self.step_config._populate_from_config(config)
+        self.step_config.default_badge.setVisible(False)
+        self.stepper.set_completed(2, self._has_enabled_behavior())
+        self._sync_ui()
+
     # --- events ---
     def _on_video_selected(self, path: str):
         self.current_video = path
-        self._sync_ui()
+        if not self._selecting_from_csv:
+            self._sync_ui()
 
     def _on_pipeline_finished(self, output_dir: str):
         self.stepper.set_completed(4, True)
@@ -160,7 +181,10 @@ class MainWindow(QMainWindow):
 
         video_name = Path(self.current_video).name if self.current_video else "no video"
         config_name = Path(self.config_path).name if self.config_path else "no config"
-        self.statusBar().showMessage(f"Video: {video_name}   |   Config: {config_name}")
+        parts = [f"Video: {video_name}", f"Config: {config_name}"]
+        if self.csv_data is not None:
+            parts.append(f"CSV: {Path(self.csv_path).name if self.csv_path else ''} ({len(self.csv_data)} entries)")
+        self.statusBar().showMessage("   |   ".join(parts))
 
     def show_error(self, title: str, message: str):
         QMessageBox.critical(self, title, message)

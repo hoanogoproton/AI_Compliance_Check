@@ -1,0 +1,73 @@
+crop:
+- 223
+- 0
+- 1092
+- 747
+model:
+  path: yolo11n-pose.pt
+  conf: 0.3
+  iou: 0.2
+output:
+  dir: ./outputs/video2
+  visualize: true
+  context_seconds: 5
+  crop_padding: 20
+  debug_keypoints: true
+zones:
+  Hand:
+    label: Hand
+    points:
+    - - 388.0
+      - 83.0
+    - - 460.0
+      - 89.0
+    - - 433.0
+      - 129.0
+    - - 377.0
+      - 116.0
+  Leave_1:
+    label: Leave_1
+    points:
+    - - 373.0
+      - 7.0
+    - - 777.0
+      - 54.0
+    - - 702.0
+      - 302.0
+    - - 311.0
+      - 216.0
+behaviors:
+- name: hand_to_head
+  enabled: false
+  params:
+    distance_threshold_ratio: 0.9
+    vertical_offset_ratio: 0.2
+    keypoint_conf_threshold: 0.5
+    head_keypoint_conf_threshold: 0.2
+    confirmation_frames: 30
+    max_gap_frames: 10
+    min_event_frames: 30
+- name: leave_zone
+  enabled: true
+  params:
+    zone: Leave_1
+    min_stay_frames: 6
+    leave_flash_frames: 20
+- name: hand_in_zone
+  enabled: true
+  params:
+    zone: Hand
+    hand: any
+    min_duration_frames: 5
+    confirmation_frames: 20
+    max_gap_frames: 5
+    min_event_frames: 30
+- name: head_turn
+  enabled: true
+  params:
+    turn_threshold_ratio: 0.3
+    window_frames: 90
+    max_turns: 2
+    confirmation_frames: 30
+    max_gap_frames: 10
+    min_event_frames: 30
