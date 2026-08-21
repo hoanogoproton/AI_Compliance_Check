@@ -33,11 +33,21 @@ def _build_behaviors(config: dict) -> list[BaseBehavior]:
         cls = registry.get(bcfg["name"])
         if cls is None:
             raise ValueError(f"Unknown behavior: {bcfg['name']}")
-        zone_name = bcfg.get("params", {}).get("zone")
-        zone = zones.get(zone_name) if zone_name else None
-        if zone_name and zone is None:
-            raise ValueError(f"Zone '{zone_name}' not found in config for behavior '{bcfg['name']}'")
-        behavior = cls(bcfg["params"], zone=zone) if zone is not None else cls(bcfg["params"])
+        zone_names = bcfg.get("params", {}).get("zones")
+        if isinstance(zone_names, str):
+            zone_names = [zone_names]
+        if not zone_names:
+            single = bcfg.get("params", {}).get("zone")
+            if single:
+                zone_names = [single]
+        resolved_zones: list = []
+        if zone_names:
+            for zn in zone_names:
+                z = zones.get(zn)
+                if z is None:
+                    raise ValueError(f"Zone '{zn}' not found in config for behavior '{bcfg['name']}'")
+                resolved_zones.append(z)
+        behavior = cls(bcfg["params"], zones=resolved_zones)
         behaviors.append(behavior)
     return behaviors
 
@@ -86,6 +96,8 @@ def _inference_worker(
                         is_detected = True
                     else:
                         is_detected = False
+                elif behavior.name == "hand_shake_object":
+                    is_detected = behavior._last_detections.get(tid, False)
                 else:
                     ts = behavior.event_manager._tracks.get(tid)
                     is_detected = bool(ts and ts.state == "ACTIVE")
@@ -103,22 +115,25 @@ def _inference_worker(
 
         zone_active = {}
         for behavior in behaviors:
-            if hasattr(behavior, 'zone') and behavior.zone:
-                zn = behavior.zone.name
-                if behavior.name == "leave_zone":
-                    flash_frames = behavior.params.get("leave_flash_frames", 20)
-                    is_active = any(
-                        frame_idx - leave_frame <= flash_frames
-                        for leave_frame in behavior._last_leave_frame.values()
-                    )
-                    state = "active" if is_active else "inactive"
-                else:
-                    active = any(
-                        fd["behaviors"].get(behavior.name, {}).get("detected")
-                        for fd in frame_data.values()
-                    )
-                    state = "active" if active else "inactive"
-                zone_active[zn] = state
+            if hasattr(behavior, 'zones') and behavior.zones:
+                for z in behavior.zones:
+                    zn = z.name
+                    if behavior.name == "leave_zone":
+                        flash_frames = behavior.params.get("leave_flash_frames", 20)
+                        is_active = any(
+                            frame_idx - leave_frame <= flash_frames
+                            for leave_frame in behavior._last_leave_frame.values()
+                        )
+                        state = "active" if is_active else "inactive"
+                    elif behavior.name == "hand_shake_object":
+                        state = "inactive"
+                    else:
+                        active = any(
+                            fd["behaviors"].get(behavior.name, {}).get("detected")
+                            for fd in frame_data.values()
+                        )
+                        state = "active" if active else "inactive"
+                    zone_active[zn] = state
 
         write_queue.put((frame_idx, frame, people, all_new_events, zone_active))
 
@@ -153,8 +168,9 @@ def run_pipeline(
         behaviors = _build_behaviors(config)
         zones_export = []
         for b in behaviors:
-            if hasattr(b, 'zone') and b.zone:
-                zones_export.append({"zone": b.zone, "behavior_name": b.name})
+            if hasattr(b, 'zones') and b.zones:
+                for z in b.zones:
+                    zones_export.append({"zone": z, "behavior_name": b.name})
     else:
         from detection.behaviors.hand_to_head import HandToHeadBehavior
         from detection.config import (
@@ -282,9 +298,10 @@ def run_pipeline(
                     bool(active_behavior_name), active_behavior_name,
                 )
             for behavior in behaviors:
-                if hasattr(behavior, 'zone') and behavior.zone:
-                    is_active = zone_active.get(behavior.zone.name, False)
-                    frame = draw_zone(frame, behavior.zone, is_active)
+                if hasattr(behavior, 'zones') and behavior.zones:
+                    for z in behavior.zones:
+                        is_active = zone_active.get(z.name, False)
+                        frame = draw_zone(frame, z, is_active)
             if writer is not None:
                 if frame.shape[1] != writer_size[0] or frame.shape[0] != writer_size[1]:
                     frame = cv2.resize(frame, writer_size)

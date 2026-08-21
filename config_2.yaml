@@ -71,3 +71,11 @@ behaviors:
     confirmation_frames: 30
     max_gap_frames: 10
     min_event_frames: 30
+- name: hand_shake_object
+  enabled: true
+  params:
+    zone: Hand
+    window_frames: 40
+    min_reversals: 3
+    min_displacement_ratio: 0.01
+    keypoint_conf_threshold: 0.5

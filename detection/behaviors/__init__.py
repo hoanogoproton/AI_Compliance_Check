@@ -2,3 +2,6 @@ from detection.behaviors.hand_to_head import HandToHeadBehavior
 from detection.behaviors.leave_zone import LeaveZoneBehavior
 from detection.behaviors.hand_in_zone import HandInZoneBehavior
 from detection.behaviors.head_turn import HeadTurnBehavior
+from detection.behaviors.hand_shake_object import HandShakeObjectBehavior
+from detection.behaviors.body_turn import BodyTurnBehavior
+from detection.behaviors.hand_snatch_object import HandSnatchObjectBehavior

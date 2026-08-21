@@ -8,13 +8,13 @@ from detection.zones.zone_definition import Zone
 class HandInZoneBehavior(BaseBehavior):
     name = "hand_in_zone"
 
-    def __init__(self, params: dict, zone: Zone | None = None):
-        self.zone = zone
+    def __init__(self, params: dict, zones: list[Zone] | None = None):
+        self.zones = zones or []
         super().__init__(params)
 
     def _validate_params(self):
-        if self.zone is None:
-            raise ValueError("hand_in_zone behavior requires a 'zone' parameter")
+        if len(self.zones) == 0:
+            raise ValueError("hand_in_zone behavior requires at least one zone")
 
     def detect_person(self, person, frame, frame_idx, timestamp) -> DetectionResult:
         kpts = person.keypoints
@@ -28,21 +28,29 @@ class HandInZoneBehavior(BaseBehavior):
             wrist_indices.extend([(9, "left"), (10, "right")])
 
         in_zone_sides = []
+        triggered_zones = set()
         for idx, side_name in wrist_indices:
             wx, wy, wc = get_keypoint(kpts, idx)
             if wc < 0.3:
                 continue
-            if self.zone.contains_point(wx, wy):
-                in_zone_sides.append(side_name)
+            for z in self.zones:
+                if z.contains_point(wx, wy):
+                    in_zone_sides.append(side_name)
+                    triggered_zones.add(z.name)
 
         if not in_zone_sides:
             return DetectionResult(
                 track_id=person.track_id, detected=False, confidence=0.0,
-                metadata={"side": "none", "zone": self.zone.name},
+                metadata={"side": "none", "zone": self.zones[0].name, "triggered_zones": []},
             )
 
         side = in_zone_sides[0] if len(in_zone_sides) == 1 else "both"
+        first_zone = self.zones[0].name
         return DetectionResult(
             track_id=person.track_id, detected=True, confidence=1.0,
-            metadata={"side": side, "zone": self.zone.name},
+            metadata={
+                "side": side,
+                "zone": first_zone,
+                "triggered_zones": sorted(triggered_zones),
+            },
         )

@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 
 from detection.config import HEAD_KEYPOINT_CONFIDENCE_THRESHOLD, KEYPOINT_CONFIDENCE_THRESHOLD
@@ -59,3 +61,35 @@ def get_wrist_positions(kpts: np.ndarray) -> list[tuple[float, float, float]]:
     if rc >= KEYPOINT_CONFIDENCE_THRESHOLD:
         result.append((rx, ry, rc))
     return result
+
+
+def compute_shoulder_angle(kpts: np.ndarray) -> float | None:
+    lx, ly, lc = get_keypoint(kpts, 5)
+    rx, ry, rc = get_keypoint(kpts, 6)
+    if lc < KEYPOINT_CONFIDENCE_THRESHOLD or rc < KEYPOINT_CONFIDENCE_THRESHOLD:
+        return None
+    angle_rad = math.atan2(ry - ly, rx - lx)
+    angle_deg = math.degrees(angle_rad) % 180.0
+    return angle_deg
+
+
+def compute_hip_angle(kpts: np.ndarray) -> float | None:
+    lx, ly, lc = get_keypoint(kpts, 11)
+    rx, ry, rc = get_keypoint(kpts, 12)
+    if lc < KEYPOINT_CONFIDENCE_THRESHOLD or rc < KEYPOINT_CONFIDENCE_THRESHOLD:
+        return None
+    angle_rad = math.atan2(ry - ly, rx - lx)
+    angle_deg = math.degrees(angle_rad) % 180.0
+    return angle_deg
+
+
+def compute_body_orientation(kpts: np.ndarray) -> float | None:
+    angle = compute_shoulder_angle(kpts)
+    if angle is not None:
+        return angle
+    return compute_hip_angle(kpts)
+
+
+def angular_difference_deg(a: float, b: float) -> float:
+    diff = abs(a - b)
+    return min(diff, 180.0 - diff)

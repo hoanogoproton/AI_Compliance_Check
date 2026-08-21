@@ -2,6 +2,7 @@ import tempfile
 from pathlib import Path
 
 import yaml
+from PySide6.QtCore import Qt, QPoint
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFileDialog,
     QGroupBox, QFormLayout, QDoubleSpinBox, QSpinBox, QCheckBox,
@@ -24,12 +25,12 @@ BEHAVIOR_PARAMS = {
         ("min_event_frames", int, 1, 300, 30),
     ],
     "leave_zone": [
-        ("zone", str, None, None, None),
+        ("zones", "zone_multi", None, None, None),
         ("min_stay_frames", int, 1, 300, 10),
         ("leave_flash_frames", int, 1, 300, 20),
     ],
     "hand_in_zone": [
-        ("zone", str, None, None, None),
+        ("zones", "zone_multi", None, None, None),
         ("hand", str, None, None, None),
         ("min_duration_frames", int, 1, 300, 5),
         ("confirmation_frames", int, 1, 300, 30),
@@ -44,7 +45,114 @@ BEHAVIOR_PARAMS = {
         ("max_gap_frames", int, 0, 300, 10),
         ("min_event_frames", int, 1, 300, 30),
     ],
+    "hand_shake_object": [
+        ("zones", "zone_multi", None, None, None),
+        ("window_frames", int, 1, 300, 40),
+        ("min_reversals", int, 1, 30, 3),
+        ("min_displacement_ratio", float, 0.001, 1.0, 0.01),
+        ("keypoint_conf_threshold", float, 0.0, 1.0, 0.5),
+    ],
+    "body_turn": [
+        ("min_angle", float, 1.0, 180.0, 45.0),
+        ("window_frames", int, 1, 300, 15),
+        ("velocity_threshold", float, 0.5, 90.0, 10.0),
+        ("confirmation_frames", int, 1, 300, 30),
+        ("max_gap_frames", int, 0, 300, 10),
+        ("min_event_frames", int, 1, 300, 30),
+    ],
+    "hand_snatch_object": [
+        ("zones", "zone_multi", None, None, None),
+        ("min_grasp_frames", int, 1, 300, 3),
+        ("snatch_velocity_ratio", float, 0.01, 2.0, 0.15),
+        ("approach_window", int, 1, 300, 10),
+        ("velocity_baseline_ratio", float, 1.0, 10.0, 2.0),
+        ("keypoint_conf_threshold", float, 0.0, 1.0, 0.5),
+        ("confirmation_frames", int, 1, 300, 30),
+        ("max_gap_frames", int, 0, 300, 10),
+        ("min_event_frames", int, 1, 300, 15),
+    ],
 }
+
+
+class ZoneMultiSelect(QWidget):
+    def __init__(self, zone_names: list[str] | None = None, parent=None):
+        super().__init__(parent)
+        self._all_names = list(zone_names) if zone_names else []
+        self._checked: set[str] = set()
+
+        self._layout = QHBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+
+        self._button = QPushButton("(none)")
+        self._button.clicked.connect(self._show_popup)
+        self._layout.addWidget(self._button)
+
+        self._popup: QFrame | None = None
+        self._checkboxes: list[QCheckBox] = []
+
+    def _show_popup(self):
+        if self._popup is not None:
+            self._popup.close()
+            self._popup = None
+            return
+
+        popup = QFrame(self, Qt.WindowType.Popup)
+        popup.setFrameStyle(QFrame.Panel | QFrame.Raised)
+        popup_layout = QVBoxLayout(popup)
+        popup_layout.setContentsMargins(8, 8, 8, 8)
+        popup_layout.setSpacing(2)
+
+        self._checkboxes = []
+        for name in self._all_names:
+            cb = QCheckBox(name)
+            cb.setChecked(name in self._checked)
+            popup_layout.addWidget(cb)
+            cb.clicked.connect(self._update_button_text)
+            self._checkboxes.append(cb)
+
+        close_btn = QPushButton("Done")
+        close_btn.clicked.connect(lambda: self._close_popup(popup))
+        popup_layout.addWidget(close_btn)
+
+        popup.move(self._button.mapToGlobal(QPoint(0, self._button.height())))
+        popup.show()
+        self._popup = popup
+
+    def _close_popup(self, popup):
+        self._checked = {cb.text() for cb in self._checkboxes if cb.isChecked()}
+        self._update_button_text()
+        popup.close()
+        self._popup = None
+
+    def _update_button_text(self):
+        if self._checkboxes:
+            selected = [cb.text() for cb in self._checkboxes if cb.isChecked()]
+        else:
+            selected = list(self._checked)
+        if not selected:
+            self._button.setText("(none)")
+        else:
+            self._button.setText("Zones: " + ", ".join(selected))
+
+    def get_selected_zones(self) -> list[str]:
+        if self._checkboxes:
+            return [cb.text() for cb in self._checkboxes if cb.isChecked()]
+        return sorted(self._checked)
+
+    def set_selected_zones(self, names: list[str]):
+        self._checked = set(names)
+        for cb in self._checkboxes:
+            cb.setChecked(cb.text() in self._checked)
+        self._update_button_text()
+
+    def update_zone_names(self, names: list[str]):
+        self._all_names = list(names)
+        if self._popup is not None:
+            self._popup.close()
+            self._popup = None
+        self._checkboxes = []
+        self._checked = {z for z in self._checked if z in set(names)}
+        self._update_button_text()
 
 
 class BehaviorEditor(QFrame):
@@ -74,19 +182,21 @@ class BehaviorEditor(QFrame):
         param_values = {k: v for k, v in params.get("params", {}).items() if k in known_names}
 
         for pname, ptype, pmin, pmax, pdefault in param_defs:
+
+            if ptype == "zone_multi":
+                w = ZoneMultiSelect(self._zone_names)
+                selected = param_values.get("zones", param_values.get("zone"))
+                if isinstance(selected, list):
+                    w.set_selected_zones(selected)
+                elif isinstance(selected, str) and selected:
+                    w.set_selected_zones([selected])
+                form.addRow("zones:", w)
+                self._widgets[pname] = w
+                continue
+
             value = param_values.get(pname, pdefault)
 
-            if ptype == str and pname == "zone":
-                cb = QComboBox()
-                cb.addItems(["(none)"] + self._zone_names)
-                if value and value in self._zone_names:
-                    cb.setCurrentText(value)
-                else:
-                    cb.setCurrentText("(none)")
-                form.addRow(f"{pname}:", cb)
-                self._widgets[pname] = cb
-
-            elif ptype == str and pname == "hand":
+            if ptype == str and pname == "hand":
                 cb = QComboBox()
                 cb.addItems(["any", "left", "right", "both"])
                 if value in ["any", "left", "right", "both"]:
@@ -116,14 +226,17 @@ class BehaviorEditor(QFrame):
         param_defs = BEHAVIOR_PARAMS.get(self.name, [])
         for pname, ptype, pmin, pmax, pdefault in param_defs:
             w = self._widgets.get(pname)
-            if isinstance(w, QDoubleSpinBox):
+            if ptype == "zone_multi":
+                if isinstance(w, ZoneMultiSelect):
+                    selected = w.get_selected_zones()
+                    if selected:
+                        params[pname] = selected
+            elif isinstance(w, QDoubleSpinBox):
                 params[pname] = w.value()
             elif isinstance(w, QSpinBox):
                 params[pname] = w.value()
             elif isinstance(w, QComboBox):
                 val = w.currentText()
-                if pname == "zone" and val == "(none)":
-                    continue
                 params[pname] = val
 
         return {
@@ -135,12 +248,8 @@ class BehaviorEditor(QFrame):
     def update_zone_names(self, names: list[str]):
         self._zone_names = names
         for pname, w in self._widgets.items():
-            if isinstance(w, QComboBox) and pname == "zone":
-                current = w.currentText()
-                w.clear()
-                w.addItems(["(none)"] + names)
-                if current in names:
-                    w.setCurrentText(current)
+            if isinstance(w, ZoneMultiSelect):
+                w.update_zone_names(names)
 
 
 class StepConfig(QWidget):

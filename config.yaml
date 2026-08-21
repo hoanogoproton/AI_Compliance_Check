@@ -36,6 +36,17 @@ zones:
       - 335.0
     - - 134.0
       - 279.0
+  Hand_Shake_OBJ:
+    label: Hand_Shake_OBJ
+    points:
+    - - 315.0
+      - 169.0
+    - - 351.0
+      - 182.0
+    - - 336.0
+      - 205.0
+    - - 300.0
+      - 189.0
 behaviors:
 - name: hand_to_head
   enabled: false
@@ -48,26 +59,55 @@ behaviors:
     max_gap_frames: 10
     min_event_frames: 30
 - name: leave_zone
-  enabled: true
+  enabled: false
   params:
-    zone: Leave
     min_stay_frames: 8
     leave_flash_frames: 20
 - name: hand_in_zone
-  enabled: true
+  enabled: false
   params:
-    zone: Hand
     hand: any
     min_duration_frames: 5
     confirmation_frames: 20
     max_gap_frames: 5
     min_event_frames: 30
 - name: head_turn
-  enabled: true
+  enabled: false
   params:
     turn_threshold_ratio: 0.3
-    window_frames: 90
+    window_frames: 30
     max_turns: 2
     confirmation_frames: 30
     max_gap_frames: 10
     min_event_frames: 30
+- name: hand_shake_object
+  enabled: false
+  params:
+    zones:
+    - Hand_Shake_OBJ
+    window_frames: 40
+    min_reversals: 3
+    min_displacement_ratio: 0.01
+    keypoint_conf_threshold: 0.5
+- name: hand_snatch_object
+  enabled: false
+  params:
+    zones:
+    - Hand
+    min_grasp_frames: 3
+    snatch_velocity_ratio: 0.15
+    approach_window: 10
+    velocity_baseline_ratio: 2.0
+    keypoint_conf_threshold: 0.5
+    confirmation_frames: 30
+    max_gap_frames: 10
+    min_event_frames: 15
+- name: body_turn
+  enabled: true
+  params:
+    min_angle: 45.0
+    window_frames: 15
+    velocity_threshold: 10.0
+    confirmation_frames: 30
+    max_gap_frames: 10
+    min_event_frames: 60

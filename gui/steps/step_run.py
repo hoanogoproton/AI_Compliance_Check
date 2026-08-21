@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 
 from gui.workers.pipeline_worker import PipelineWorker
 
-ZONE_BEHAVIORS = ("leave_zone", "hand_in_zone")
+ZONE_BEHAVIORS = ("leave_zone", "hand_in_zone", "hand_shake_object", "hand_snatch_object")
 
 
 class StepRun(QWidget):
@@ -108,9 +108,18 @@ class StepRun(QWidget):
             if not b.get("enabled", False):
                 continue
             if b.get("name") in ZONE_BEHAVIORS:
-                zone = (b.get("params") or {}).get("zone")
-                if not zone or zone not in zones:
+                zone_names = (b.get("params") or {}).get("zones", [])
+                if isinstance(zone_names, str):
+                    zone_names = [zone_names]
+                if not zone_names:
+                    single = (b.get("params") or {}).get("zone")
+                    if single:
+                        zone_names = [single]
+                if not zone_names:
                     return False
+                for zn in zone_names:
+                    if zn not in zones:
+                        return False
         return True
 
     def _preflight_passed(self, checks: dict) -> bool:
