@@ -90,10 +90,10 @@ behaviors:
     min_displacement_ratio: 0.01
     keypoint_conf_threshold: 0.5
 - name: hand_snatch_object
-  enabled: false
+  enabled: true
   params:
     zones:
-    - Hand
+    - Hand_Shake_OBJ
     min_grasp_frames: 3
     snatch_velocity_ratio: 0.15
     approach_window: 10
@@ -103,7 +103,7 @@ behaviors:
     max_gap_frames: 10
     min_event_frames: 15
 - name: body_turn
-  enabled: true
+  enabled: false
   params:
     min_angle: 45.0
     window_frames: 15
