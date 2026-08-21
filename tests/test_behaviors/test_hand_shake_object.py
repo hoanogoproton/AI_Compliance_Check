@@ -1,4 +1,4 @@
-﻿import numpy as np
+import numpy as np
 
 from detection.behaviors.hand_shake_object import HandShakeObjectBehavior
 from detection.detector import TrackedPerson
@@ -46,7 +46,7 @@ def test_no_zone_raises():
 
 
 def test_no_shake_outside_zone():
-    behavior = HandShakeObjectBehavior({"window_frames": 40, "min_reversals": 3}, zone=_make_zone())
+    behavior = HandShakeObjectBehavior({"window_frames": 40, "min_reversals": 3}, zones=[_make_zone()])
     seq = [
         {"wrist_l_x": 300, "wrist_l_y": 140},
         {"wrist_l_x": 305, "wrist_l_y": 140},
@@ -60,7 +60,7 @@ def test_no_shake_outside_zone():
 
 
 def test_shake_inside_zone_detected():
-    behavior = HandShakeObjectBehavior({"window_frames": 40, "min_reversals": 3}, zone=_make_zone())
+    behavior = HandShakeObjectBehavior({"window_frames": 40, "min_reversals": 3}, zones=[_make_zone()])
     seq = [
         {"wrist_l_x": 245, "wrist_l_y": 140},
         {"wrist_l_x": 250, "wrist_l_y": 140},
@@ -75,7 +75,7 @@ def test_shake_inside_zone_detected():
 
 
 def test_insufficient_reversals():
-    behavior = HandShakeObjectBehavior({"window_frames": 40, "min_reversals": 3}, zone=_make_zone())
+    behavior = HandShakeObjectBehavior({"window_frames": 40, "min_reversals": 3}, zones=[_make_zone()])
     seq = [
         {"wrist_l_x": 245, "wrist_l_y": 140},
         {"wrist_l_x": 250, "wrist_l_y": 140},
@@ -86,7 +86,7 @@ def test_insufficient_reversals():
 
 
 def test_low_confidence():
-    behavior = HandShakeObjectBehavior({"window_frames": 40, "min_reversals": 3, "keypoint_conf_threshold": 0.5}, zone=_make_zone())
+    behavior = HandShakeObjectBehavior({"window_frames": 40, "min_reversals": 3, "keypoint_conf_threshold": 0.5}, zones=[_make_zone()])
     seq = [
         {"wrist_l_x": 245, "wrist_l_y": 140, "wrist_l_conf": 0.3},
         {"wrist_l_x": 250, "wrist_l_y": 140, "wrist_l_conf": 0.3},
@@ -100,8 +100,16 @@ def test_low_confidence():
 
 
 def test_window_expiry():
-    behavior = HandShakeObjectBehavior({"window_frames": 10, "min_reversals": 3}, zone=_make_zone())
-    seq = [_make_oscillating_seq(245, 6)]
+    behavior = HandShakeObjectBehavior({"window_frames": 10, "min_reversals": 3}, zones=[_make_zone()])
+    # Build 3+ reversals by oscillating x position
+    seq = [
+        {"wrist_l_x": 245, "wrist_l_y": 140},
+        {"wrist_l_x": 250, "wrist_l_y": 140},
+        {"wrist_l_x": 245, "wrist_l_y": 140},
+        {"wrist_l_x": 250, "wrist_l_y": 140},
+        {"wrist_l_x": 245, "wrist_l_y": 140},
+        {"wrist_l_x": 250, "wrist_l_y": 140},
+    ]
     results = _run_sequence(behavior, 1, seq)
     assert results[5].detected, "Should detect at frame 5"
 
@@ -111,7 +119,7 @@ def test_window_expiry():
 
 
 def test_hand_enters_zone_then_shakes():
-    behavior = HandShakeObjectBehavior({"window_frames": 40, "min_reversals": 3}, zone=_make_zone())
+    behavior = HandShakeObjectBehavior({"window_frames": 40, "min_reversals": 3}, zones=[_make_zone()])
     seq = [
         {"wrist_l_x": 300, "wrist_l_y": 140},
         {"wrist_l_x": 250, "wrist_l_y": 140},

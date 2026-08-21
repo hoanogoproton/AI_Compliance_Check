@@ -10,8 +10,8 @@ from detection.pose_utils import compute_head_yaw_offset
 class HeadTurnBehavior(BaseBehavior):
     name = "head_turn"
 
-    def __init__(self, params: dict):
-        super().__init__(params)
+    def __init__(self, params: dict, **kwargs):
+        super().__init__(params, **kwargs)
         self._turn_frames: dict[int, deque[int]] = {}
         self._prev_side: dict[int, str] = {}
 

@@ -20,7 +20,7 @@ from detection.video_utils import create_video_writer
 from detection.visualizer import draw_skeleton, draw_zone
 from detection.zones.zone_checker import load_zones
 
-MAX_CACHED_FRAMES = 600
+MAX_CACHED_FRAMES = 100000
 
 
 def _build_behaviors(config: dict) -> list[BaseBehavior]:
@@ -81,14 +81,20 @@ def _inference_worker(
         people = process_frame(model, frame, conf=conf, iou=iou)
         all_new_events = []
         frame_data = {}
+
+        # Phase 1: Process each behavior ONCE with ALL people,
+        # so the state machine sees all track detections atomically per frame.
+        for behavior in behaviors:
+            new_events = behavior.process_frame(people, frame, frame_idx, timestamp)
+            for ev in new_events:
+                ev.behavior_name = behavior.name
+            all_new_events.extend(new_events)
+
+        # Phase 2: Build per-person frame_data for visualization / debugging.
         for person in people:
             person_behaviors = {}
+            tid = person.track_id
             for behavior in behaviors:
-                new_events = behavior.process_frame([person], frame, frame_idx, timestamp)
-                for ev in new_events:
-                    ev.behavior_name = behavior.name
-                all_new_events.extend(new_events)
-                tid = person.track_id
                 if behavior.name == "leave_zone":
                     if behavior._track_inside.get(tid, False):
                         is_detected = False
@@ -96,8 +102,6 @@ def _inference_worker(
                         is_detected = True
                     else:
                         is_detected = False
-                elif behavior.name == "hand_shake_object":
-                    is_detected = behavior._last_detections.get(tid, False)
                 else:
                     ts = behavior.event_manager._tracks.get(tid)
                     is_detected = bool(ts and ts.state == "ACTIVE")
@@ -125,8 +129,6 @@ def _inference_worker(
                             for leave_frame in behavior._last_leave_frame.values()
                         )
                         state = "active" if is_active else "inactive"
-                    elif behavior.name == "hand_shake_object":
-                        state = "inactive"
                     else:
                         active = any(
                             fd["behaviors"].get(behavior.name, {}).get("detected")
@@ -212,6 +214,7 @@ def run_pipeline(
     events = []
     metadata_events = []
     event_counter = 0
+    exported_event_ids: set[int] = set()
 
     writer = None
     writer_size = None
@@ -257,7 +260,6 @@ def run_pipeline(
         if item is None:
             break
         frame_idx, frame, people, new_events, zone_active = item
-        events.extend(new_events)
 
         for ev in new_events:
             event_counter += 1
@@ -276,6 +278,7 @@ def run_pipeline(
                 crop_region=crop_region,
             )
             metadata_events.append(meta)
+            exported_event_ids.add(id(ev))
             if log_callback:
                 log_callback(
                     f"  Event {meta['event_id']}: Track {meta['track_id']}, "
@@ -327,23 +330,24 @@ def run_pipeline(
             ev.end_time = total_frames / fps
 
     for ev in events:
-        if ev not in metadata_events:
-            event_counter += 1
-            meta = export_single_event(
-                ev,
-                event_counter,
-                video_path,
-                frame_data_cache,
-                output_path,
-                fps,
-                context_seconds=context_seconds,
-                padding=crop_padding,
-                debug_keypoints=debug_keypoints,
-                video_stem=video_stem,
-                zone_export_info=zones_export,
-                crop_region=crop_region,
-            )
-            metadata_events.append(meta)
+        if id(ev) in exported_event_ids:
+            continue
+        event_counter += 1
+        meta = export_single_event(
+            ev,
+            event_counter,
+            video_path,
+            frame_data_cache,
+            output_path,
+            fps,
+            context_seconds=context_seconds,
+            padding=crop_padding,
+            debug_keypoints=debug_keypoints,
+            video_stem=video_stem,
+            zone_export_info=zones_export,
+            crop_region=crop_region,
+        )
+        metadata_events.append(meta)
 
     cap.release()
     if writer is not None:

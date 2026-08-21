@@ -18,10 +18,10 @@ class HandToHeadBehavior(BaseBehavior):
         kpt_conf = params.get("keypoint_conf_threshold", KEYPOINT_CONFIDENCE_THRESHOLD)
         head_conf = params.get("head_keypoint_conf_threshold", HEAD_KEYPOINT_CONFIDENCE_THRESHOLD)
 
-        head_center = compute_head_center(kpts)
+        head_center = compute_head_center(kpts, head_conf_threshold=head_conf)
         if head_center is None:
             return DetectionResult(track_id=person.track_id, detected=False, confidence=0.0, metadata={"side": "none"})
-        shoulder_width = compute_shoulder_width(kpts)
+        shoulder_width = compute_shoulder_width(kpts, kpt_conf_threshold=kpt_conf)
         if shoulder_width < 20.0:
             return DetectionResult(track_id=person.track_id, detected=False, confidence=0.0, metadata={"side": "none"})
         max_allowed = shoulder_width * threshold_ratio

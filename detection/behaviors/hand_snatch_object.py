@@ -20,8 +20,7 @@ class HandSnatchObjectBehavior(BaseBehavior):
     name = "hand_snatch_object"
 
     def __init__(self, params: dict, zones: list[Zone] | None = None):
-        self.zones = zones or []
-        super().__init__(params)
+        super().__init__(params, zones=zones)
         self._wrist_history: dict[tuple[int, str], deque] = {}
         self._inside_state: dict[tuple[int, str], bool] = {}
         self._entry_frame: dict[tuple[int, str], int] = {}

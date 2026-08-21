@@ -15,7 +15,7 @@ def _make_kpts(arr_17x3):
 
 def test_hand_in_zone_left():
     zone = Zone(name="desk", label="Desk", points=[[0, 0], [100, 0], [100, 100], [0, 100]])
-    behavior = HandInZoneBehavior({"hand": "any"}, zone=zone)
+    behavior = HandInZoneBehavior({"hand": "any"}, zones=[zone])
     kpts = _make_kpts([[0, 0, 0]] * 17)
     kpts[9] = [50, 50, 0.9]  # left wrist inside zone
     kpts[10] = [200, 200, 0.9]  # right wrist outside
@@ -27,7 +27,7 @@ def test_hand_in_zone_left():
 
 def test_hand_in_zone_right():
     zone = Zone(name="desk", label="Desk", points=[[0, 0], [100, 0], [100, 100], [0, 100]])
-    behavior = HandInZoneBehavior({"hand": "any"}, zone=zone)
+    behavior = HandInZoneBehavior({"hand": "any"}, zones=[zone])
     kpts = _make_kpts([[0, 0, 0]] * 17)
     kpts[9] = [200, 200, 0.9]
     kpts[10] = [50, 50, 0.9]
@@ -39,7 +39,7 @@ def test_hand_in_zone_right():
 
 def test_hand_in_zone_not_detected():
     zone = Zone(name="desk", label="Desk", points=[[0, 0], [100, 0], [100, 100], [0, 100]])
-    behavior = HandInZoneBehavior({"hand": "any"}, zone=zone)
+    behavior = HandInZoneBehavior({"hand": "any"}, zones=[zone])
     kpts = _make_kpts([[0, 0, 0]] * 17)
     kpts[9] = [200, 200, 0.9]
     kpts[10] = [300, 300, 0.9]
@@ -51,7 +51,7 @@ def test_hand_in_zone_not_detected():
 
 def test_hand_in_zone_no_zone_raises():
     try:
-        HandInZoneBehavior({"hand": "any"}, zone=None)
+        HandInZoneBehavior({"hand": "any"}, zones=None)
         assert False, "Should have raised ValueError"
     except ValueError:
         pass

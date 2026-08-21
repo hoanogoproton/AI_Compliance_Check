@@ -16,8 +16,7 @@ class HandShakeObjectBehavior(BaseBehavior):
     name = "hand_shake_object"
 
     def __init__(self, params: dict, zones: list[Zone] | None = None):
-        self.zones = zones or []
-        super().__init__(params)
+        super().__init__(params, zones=zones)
         self._prev_wrist_pos: dict[tuple[int, str], tuple[float, float] | None] = {}
         self._wrist_x_dir: dict[tuple[int, str], int] = {}
         self._wrist_y_dir: dict[tuple[int, str], int] = {}
@@ -40,7 +39,7 @@ class HandShakeObjectBehavior(BaseBehavior):
         if shoulder_width <= 0:
             self._last_detections[tid] = False
             return DetectionResult(track_id=tid, detected=False, confidence=0.0,
-                                   metadata={"hand": "none", "zone": self.zones[0].name, "triggered_zones": []})
+                                   metadata={"hand": "none", "side": "none", "zone": self.zones[0].name, "triggered_zones": []})
         min_disp = shoulder_width * ratio
 
         hands = [
@@ -48,7 +47,8 @@ class HandShakeObjectBehavior(BaseBehavior):
             ("right", get_keypoint(kpts, 10)),
         ]
 
-        triggered_zones = set()
+        triggered_zones_all = set()
+        best_result = None
 
         for hand_name, wrist in hands:
             wx, wy, wc = wrist
@@ -61,7 +61,7 @@ class HandShakeObjectBehavior(BaseBehavior):
 
             for z in self.zones:
                 if z.contains_point(wx, wy):
-                    triggered_zones.add(z.name)
+                    triggered_zones_all.add(z.name)
 
             key = (tid, hand_name)
             prev_wrist = self._prev_wrist_pos.get(key, None)
@@ -95,20 +95,24 @@ class HandShakeObjectBehavior(BaseBehavior):
             detected = count >= min_rev
             conf = min(1.0, count / float(min_rev))
 
-            self._last_detections[tid] = detected
+            if detected and (best_result is None or conf > best_result.confidence):
+                best_result = DetectionResult(
+                    track_id=tid,
+                    detected=True,
+                    confidence=conf,
+                    metadata={
+                        "hand": hand_name,
+                        "side": hand_name,
+                        "wrist_reversals": count,
+                        "zone": self.zones[0].name,
+                        "triggered_zones": sorted(triggered_zones_all),
+                    },
+                )
 
-            return DetectionResult(
-                track_id=tid,
-                detected=detected,
-                confidence=conf,
-                metadata={
-                    "hand": hand_name,
-                    "wrist_reversals": count,
-                    "zone": self.zones[0].name,
-                    "triggered_zones": sorted(triggered_zones),
-                },
-            )
+        if best_result is not None:
+            self._last_detections[tid] = True
+            return best_result
 
         self._last_detections[tid] = False
         return DetectionResult(track_id=tid, detected=False, confidence=0.0,
-                               metadata={"hand": "none", "zone": self.zones[0].name, "triggered_zones": []})
+                               metadata={"hand": "none", "side": "none", "zone": self.zones[0].name, "triggered_zones": []})

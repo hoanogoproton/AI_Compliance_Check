@@ -20,6 +20,7 @@ class Event:
 @dataclass
 class _TrackState:
     state: str = "IDLE"
+    confirm_count: int = 0
     gap_count: int = 0
     event_frames: list[int] = field(default_factory=list)
     hand_sides: list[str] = field(default_factory=list)
@@ -30,7 +31,10 @@ class _TrackState:
 
 
 class StatefulEventManager:
-    def __init__(self):
+    def __init__(self, confirmation_frames=None, max_gap_frames=None, min_event_frames=None):
+        self.confirmation_frames = confirmation_frames if confirmation_frames is not None else CONFIRMATION_FRAMES
+        self.max_gap_frames = max_gap_frames if max_gap_frames is not None else MAX_GAP_FRAMES
+        self.min_event_frames = min_event_frames if min_event_frames is not None else MIN_EVENT_FRAMES
         self._tracks: dict[int, _TrackState] = {}
         self._event_counter = 0
         self._completed_events: list[Event] = []
@@ -46,15 +50,35 @@ class StatefulEventManager:
             if tid not in self._tracks:
                 self._tracks[tid] = _TrackState()
             ts = self._tracks[tid]
+
             if ts.state == "IDLE":
                 if is_detected:
-                    ts.state = "ACTIVE"
+                    ts.state = "CONFIRMING"
+                    ts.confirm_count = 1
                     ts.start_frame = frame_idx
                     ts.start_time = timestamp
                     ts.event_frames = [frame_idx]
                     ts.hand_sides = [side]
                     ts.max_conf = conf
                     ts.gap_count = 0
+
+            elif ts.state == "CONFIRMING":
+                if is_detected:
+                    ts.confirm_count += 1
+                    ts.event_frames.append(frame_idx)
+                    ts.hand_sides.append(side)
+                    if conf > ts.max_conf:
+                        ts.max_conf = conf
+                    if ts.confirm_count >= self.confirmation_frames:
+                        ts.state = "ACTIVE"
+                        ts.gap_count = 0
+                else:
+                    ts.state = "IDLE"
+                    ts.confirm_count = 0
+                    ts.event_frames = []
+                    ts.hand_sides = []
+                    ts.max_conf = 0.0
+
             elif ts.state == "ACTIVE":
                 if is_detected:
                     ts.event_frames.append(frame_idx)
@@ -64,8 +88,8 @@ class StatefulEventManager:
                     ts.gap_count = 0
                 else:
                     ts.gap_count += 1
-                    if ts.gap_count > MAX_GAP_FRAMES:
-                        if len(ts.event_frames) >= MIN_EVENT_FRAMES:
+                    if ts.gap_count > self.max_gap_frames:
+                        if len(ts.event_frames) >= self.min_event_frames:
                             event = Event(
                                 track_id=tid,
                                 start_frame=ts.start_frame,
@@ -80,20 +104,23 @@ class StatefulEventManager:
                             new_completed.append(event)
                         ts.state = "COOLDOWN"
                         ts.cooldown_count = 0
+
             elif ts.state == "COOLDOWN":
                 ts.cooldown_count += 1
-                if ts.cooldown_count >= CONFIRMATION_FRAMES:
+                if ts.cooldown_count >= self.confirmation_frames:
                     ts.state = "IDLE"
+                    ts.confirm_count = 0
                     ts.gap_count = 0
                     ts.event_frames = []
                     ts.hand_sides = []
                     ts.max_conf = 0.0
+
         return new_completed
 
     def finalize(self) -> list[Event]:
         completed = []
         for tid, ts in list(self._tracks.items()):
-            if ts.state == "ACTIVE" and len(ts.event_frames) >= MIN_EVENT_FRAMES:
+            if ts.state == "ACTIVE" and len(ts.event_frames) >= self.min_event_frames:
                 event = Event(
                     track_id=tid,
                     start_frame=ts.start_frame,

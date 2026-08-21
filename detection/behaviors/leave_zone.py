@@ -9,8 +9,7 @@ class LeaveZoneBehavior(BaseBehavior):
     name = "leave_zone"
 
     def __init__(self, params: dict, zones: list[Zone] | None = None):
-        self.zones = zones or []
-        super().__init__(params)
+        super().__init__(params, zones=zones)
         self._track_inside: dict[int, bool] = {}
         self._track_inside_counter: dict[int, int] = {}
         self._track_inside_zones: dict[int, set[str]] = {}
@@ -77,6 +76,7 @@ class LeaveZoneBehavior(BaseBehavior):
                     track_id=person.track_id,
                     start_frame=frame_idx,
                     end_frame=frame_idx,
+                    start_time=timestamp,
                     end_time=timestamp,
                     max_confidence=result.confidence,
                     frames=[frame_idx],
@@ -102,7 +102,7 @@ class LeaveZoneBehavior(BaseBehavior):
 
         if is_inside:
             self._track_inside_counter[tid] += 1
-            self._track_inside_zones[tid].update(inside_zones)
+            self._track_inside_zones.setdefault(tid, set()).update(inside_zones)
             if self._track_inside_counter[tid] >= min_stay:
                 self._track_inside[tid] = True
             return DetectionResult(

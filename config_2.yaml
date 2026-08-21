@@ -79,3 +79,6 @@ behaviors:
     min_reversals: 3
     min_displacement_ratio: 0.01
     keypoint_conf_threshold: 0.5
+    confirmation_frames: 5
+    max_gap_frames: 10
+    min_event_frames: 10

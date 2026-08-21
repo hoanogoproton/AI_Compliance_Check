@@ -5,6 +5,7 @@ import numpy as np
 
 from detection.detector import TrackedPerson
 from detection.event_manager import StatefulEventManager, Event
+from detection.config import CONFIRMATION_FRAMES, MAX_GAP_FRAMES, MIN_EVENT_FRAMES
 
 
 @dataclass
@@ -18,9 +19,17 @@ class DetectionResult:
 class BaseBehavior(ABC):
     name: str = ""
 
-    def __init__(self, params: dict):
+    def __init__(self, params: dict, zones: list | None = None):
         self.params = params
-        self.event_manager = StatefulEventManager()
+        self.zones = zones or []
+        confirmation_frames = params.get("confirmation_frames", CONFIRMATION_FRAMES)
+        max_gap_frames = params.get("max_gap_frames", MAX_GAP_FRAMES)
+        min_event_frames = params.get("min_event_frames", MIN_EVENT_FRAMES)
+        self.event_manager = StatefulEventManager(
+            confirmation_frames=confirmation_frames,
+            max_gap_frames=max_gap_frames,
+            min_event_frames=min_event_frames,
+        )
         self._validate_params()
 
     def _validate_params(self):

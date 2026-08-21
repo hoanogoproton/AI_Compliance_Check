@@ -12,7 +12,7 @@ def _make_person(track_id, bbox):
 
 def test_leave_zone_detected():
     zone = Zone(name="test_zone", label="Test Zone", points=[[0, 0], [100, 0], [100, 100], [0, 100]])
-    behavior = LeaveZoneBehavior({"min_stay_frames": 2}, zone=zone)
+    behavior = LeaveZoneBehavior({"min_stay_frames": 2}, zones=[zone])
     person = _make_person(1, (40, 40, 60, 60))
 
     # First frame inside
@@ -33,7 +33,7 @@ def test_leave_zone_detected():
 
 def test_leave_zone_never_inside():
     zone = Zone(name="test_zone", label="Test Zone", points=[[0, 0], [100, 0], [100, 100], [0, 100]])
-    behavior = LeaveZoneBehavior({"min_stay_frames": 2}, zone=zone)
+    behavior = LeaveZoneBehavior({"min_stay_frames": 2}, zones=[zone])
     person = _make_person(1, (200, 200, 220, 220))
     r = behavior.detect_person(person, None, 0, 0.0)
     assert not r.detected
@@ -42,7 +42,7 @@ def test_leave_zone_never_inside():
 
 def test_leave_zone_no_zone_raises():
     try:
-        LeaveZoneBehavior({"min_stay_frames": 2}, zone=None)
+        LeaveZoneBehavior({"min_stay_frames": 2}, zones=None)
         assert False, "Should have raised ValueError"
     except ValueError:
         pass
@@ -50,7 +50,7 @@ def test_leave_zone_no_zone_raises():
 
 def test_leave_zone_process_frame_emits_event():
     zone = Zone(name="test_zone", label="Test Zone", points=[[0, 0], [100, 0], [100, 100], [0, 100]])
-    behavior = LeaveZoneBehavior({"min_stay_frames": 2}, zone=zone)
+    behavior = LeaveZoneBehavior({"min_stay_frames": 2}, zones=[zone])
 
     # Two frames inside to reach min_stay
     inside = _make_person(1, (40, 40, 60, 60))
@@ -75,7 +75,7 @@ def test_leave_zone_process_frame_emits_event():
 
 def test_obstacle_occlusion():
     zone = Zone(name="test_zone", label="Test Zone", points=[[0, 0], [100, 0], [100, 100], [0, 100]])
-    behavior = LeaveZoneBehavior({"min_stay_frames": 2, "max_missing_frames": 15}, zone=zone)
+    behavior = LeaveZoneBehavior({"min_stay_frames": 2, "max_missing_frames": 15}, zones=[zone])
 
     inside = _make_person(1, (40, 40, 60, 60))
     behavior.process_frame([inside], None, 0, 0.0)
@@ -96,7 +96,7 @@ def test_obstacle_occlusion():
 
 def test_occlusion_reappears_outside():
     zone = Zone(name="test_zone", label="Test Zone", points=[[0, 0], [100, 0], [100, 100], [0, 100]])
-    behavior = LeaveZoneBehavior({"min_stay_frames": 2, "max_missing_frames": 10}, zone=zone)
+    behavior = LeaveZoneBehavior({"min_stay_frames": 2, "max_missing_frames": 10}, zones=[zone])
 
     inside = _make_person(1, (40, 40, 60, 60))
     behavior.process_frame([inside], None, 0, 0.0)
@@ -118,7 +118,7 @@ def test_occlusion_reappears_outside():
 
 def test_occlusion_reappears_inside():
     zone = Zone(name="test_zone", label="Test Zone", points=[[0, 0], [100, 0], [100, 100], [0, 100]])
-    behavior = LeaveZoneBehavior({"min_stay_frames": 2, "max_missing_frames": 10}, zone=zone)
+    behavior = LeaveZoneBehavior({"min_stay_frames": 2, "max_missing_frames": 10}, zones=[zone])
 
     inside = _make_person(1, (40, 40, 60, 60))
     behavior.process_frame([inside], None, 0, 0.0)

@@ -9,8 +9,7 @@ class HandInZoneBehavior(BaseBehavior):
     name = "hand_in_zone"
 
     def __init__(self, params: dict, zones: list[Zone] | None = None):
-        self.zones = zones or []
-        super().__init__(params)
+        super().__init__(params, zones=zones)
 
     def _validate_params(self):
         if len(self.zones) == 0:

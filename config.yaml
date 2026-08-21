@@ -8,7 +8,7 @@ model:
   conf: 0.3
   iou: 0.5
 output:
-  dir: ./outputs
+  dir: ./outputs/video1
   visualize: true
   context_seconds: 5
   crop_padding: 20
@@ -49,30 +49,34 @@ zones:
       - 189.0
 behaviors:
 - name: hand_to_head
-  enabled: false
+  enabled: true
   params:
-    distance_threshold_ratio: 0.9
+    distance_threshold_ratio: 0.7
     vertical_offset_ratio: 0.2
-    keypoint_conf_threshold: 0.5
+    keypoint_conf_threshold: 0.2
     head_keypoint_conf_threshold: 0.2
-    confirmation_frames: 30
+    confirmation_frames: 15
     max_gap_frames: 10
-    min_event_frames: 30
+    min_event_frames: 15
 - name: leave_zone
-  enabled: false
+  enabled: true
   params:
+    zones:
+    - Leave
     min_stay_frames: 8
     leave_flash_frames: 20
 - name: hand_in_zone
-  enabled: false
+  enabled: true
   params:
+    zones:
+    - Hand
     hand: any
     min_duration_frames: 5
     confirmation_frames: 20
     max_gap_frames: 5
     min_event_frames: 30
 - name: head_turn
-  enabled: false
+  enabled: true
   params:
     turn_threshold_ratio: 0.3
     window_frames: 30
@@ -81,7 +85,7 @@ behaviors:
     max_gap_frames: 10
     min_event_frames: 30
 - name: hand_shake_object
-  enabled: false
+  enabled: true
   params:
     zones:
     - Hand_Shake_OBJ
@@ -89,6 +93,9 @@ behaviors:
     min_reversals: 3
     min_displacement_ratio: 0.01
     keypoint_conf_threshold: 0.5
+    confirmation_frames: 5
+    max_gap_frames: 10
+    min_event_frames: 10
 - name: hand_snatch_object
   enabled: true
   params:
@@ -99,11 +106,11 @@ behaviors:
     approach_window: 10
     velocity_baseline_ratio: 2.0
     keypoint_conf_threshold: 0.5
-    confirmation_frames: 30
+    confirmation_frames: 10
     max_gap_frames: 10
     min_event_frames: 15
 - name: body_turn
-  enabled: false
+  enabled: true
   params:
     min_angle: 45.0
     window_frames: 15
