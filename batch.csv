@@ -1,4 +1,4 @@
 video,config,output_dir
 ./videos/Video camera DAHUA.mp4,./config.yaml,./outputs/video1
 D:\Project Demo\DEMO - Nhan dien nguoi\videos\CA103-FB-SSI1-No1-20260120-033046.mp4,./config_2.yaml,./outputs/video2
-D:\Project Demo\DEMO - Nhan dien nguoi\videos\2.mp4,./config_2.yaml,./outputs/video3
+D:\Project Demo\DEMO - Nhan dien nguoi\videos\ban sub 2.mp4,./config_3.yaml,./outputs/video3

@@ -12,19 +12,16 @@ def _make_person(track_id, bbox):
 
 def test_leave_zone_detected():
     zone = Zone(name="test_zone", label="Test Zone", points=[[0, 0], [100, 0], [100, 100], [0, 100]])
-    behavior = LeaveZoneBehavior({"min_stay_frames": 2}, zones=[zone])
+    behavior = LeaveZoneBehavior({"min_stay_frames": 2, "min_leave_frames": 1}, zones=[zone])
     person = _make_person(1, (40, 40, 60, 60))
 
-    # First frame inside
     r = behavior.detect_person(person, None, 0, 0.0)
     assert not r.detected
     assert r.metadata["inside"]
 
-    # Second frame inside (reaches min_stay)
     r = behavior.detect_person(person, None, 1, 0.033)
     assert not r.detected
 
-    # Third frame outside
     person2 = _make_person(1, (200, 200, 220, 220))
     r = behavior.detect_person(person2, None, 2, 0.066)
     assert r.detected
@@ -50,9 +47,8 @@ def test_leave_zone_no_zone_raises():
 
 def test_leave_zone_process_frame_emits_event():
     zone = Zone(name="test_zone", label="Test Zone", points=[[0, 0], [100, 0], [100, 100], [0, 100]])
-    behavior = LeaveZoneBehavior({"min_stay_frames": 2}, zones=[zone])
+    behavior = LeaveZoneBehavior({"min_stay_frames": 2, "min_leave_frames": 1}, zones=[zone])
 
-    # Two frames inside to reach min_stay
     inside = _make_person(1, (40, 40, 60, 60))
     events = behavior.process_frame([inside], None, 0, 0.0)
     assert events == []
@@ -60,7 +56,6 @@ def test_leave_zone_process_frame_emits_event():
     assert events == []
     assert behavior._track_inside[1]
 
-    # Person leaves -> event emitted immediately
     outside = _make_person(1, (200, 200, 220, 220))
     events = behavior.process_frame([outside], None, 2, 0.066)
     assert len(events) == 1
@@ -68,7 +63,6 @@ def test_leave_zone_process_frame_emits_event():
     assert events[0].behavior_name == "leave_zone"
     assert not behavior._track_inside[1]
 
-    # No more events while person stays outside
     events = behavior.process_frame([outside], None, 3, 0.099)
     assert events == []
 
@@ -81,7 +75,7 @@ def test_obstacle_occlusion():
     behavior.process_frame([inside], None, 0, 0.0)
     behavior.process_frame([inside], None, 1, 0.033)
 
-    # Person disappears behind obstacle (no detections for 16 frames)
+    events = []
     for f in range(2, 18):
         events = behavior.process_frame([], None, f, f * 0.033)
         if events:
@@ -96,18 +90,16 @@ def test_obstacle_occlusion():
 
 def test_occlusion_reappears_outside():
     zone = Zone(name="test_zone", label="Test Zone", points=[[0, 0], [100, 0], [100, 100], [0, 100]])
-    behavior = LeaveZoneBehavior({"min_stay_frames": 2, "max_missing_frames": 10}, zones=[zone])
+    behavior = LeaveZoneBehavior({"min_stay_frames": 2, "max_missing_frames": 10, "min_leave_frames": 1}, zones=[zone])
 
     inside = _make_person(1, (40, 40, 60, 60))
     behavior.process_frame([inside], None, 0, 0.0)
     behavior.process_frame([inside], None, 1, 0.033)
 
-    # Disappears for 5 frames (under threshold)
     for f in range(2, 7):
         events = behavior.process_frame([], None, f, f * 0.033)
         assert events == []
 
-    # Reappears outside -> normal leave event
     outside = _make_person(1, (200, 200, 220, 220))
     events = behavior.process_frame([outside], None, 7, 7 * 0.033)
     assert len(events) == 1
@@ -124,12 +116,86 @@ def test_occlusion_reappears_inside():
     behavior.process_frame([inside], None, 0, 0.0)
     behavior.process_frame([inside], None, 1, 0.033)
 
-    # Disappears for 5 frames (under threshold)
     for f in range(2, 7):
         events = behavior.process_frame([], None, f, f * 0.033)
         assert events == []
 
-    # Reappears inside -> no event, inside state preserved
     events = behavior.process_frame([inside], None, 7, 7 * 0.033)
     assert events == []
     assert behavior._track_inside.get(1, False)
+
+
+def test_min_leave_frames_debounce():
+    zone = Zone(name="test_zone", label="Test Zone", points=[[0, 0], [100, 0], [100, 100], [0, 100]])
+    behavior = LeaveZoneBehavior({"min_stay_frames": 2, "min_leave_frames": 3}, zones=[zone])
+
+    inside = _make_person(1, (40, 40, 60, 60))
+    behavior.process_frame([inside], None, 0, 0.0)
+    behavior.process_frame([inside], None, 1, 0.033)
+    assert behavior._track_inside[1]
+
+    outside = _make_person(1, (200, 200, 220, 220))
+
+    events = behavior.process_frame([outside], None, 2, 0.066)
+    assert events == []
+    assert behavior._track_inside[1]
+    assert behavior._track_outside_counter[1] == 1
+
+    events = behavior.process_frame([outside], None, 3, 0.099)
+    assert events == []
+    assert behavior._track_inside[1]
+    assert behavior._track_outside_counter[1] == 2
+
+    events = behavior.process_frame([outside], None, 4, 0.133)
+    assert len(events) == 1
+    assert events[0].track_id == 1
+    assert events[0].behavior_name == "leave_zone"
+    assert not behavior._track_inside[1]
+    assert behavior._track_outside_counter[1] == 0
+
+
+def test_min_leave_frames_resets_on_reentry():
+    zone = Zone(name="test_zone", label="Test Zone", points=[[0, 0], [100, 0], [100, 100], [0, 100]])
+    behavior = LeaveZoneBehavior({"min_stay_frames": 2, "min_leave_frames": 5}, zones=[zone])
+
+    inside = _make_person(1, (40, 40, 60, 60))
+    behavior.process_frame([inside], None, 0, 0.0)
+    behavior.process_frame([inside], None, 1, 0.033)
+    assert behavior._track_inside[1]
+
+    outside = _make_person(1, (200, 200, 220, 220))
+
+    events = behavior.process_frame([outside], None, 2, 0.066)
+    assert events == []
+    assert behavior._track_outside_counter[1] == 1
+
+    events = behavior.process_frame([outside], None, 3, 0.099)
+    assert events == []
+    assert behavior._track_outside_counter[1] == 2
+
+    events = behavior.process_frame([inside], None, 4, 0.133)
+    assert events == []
+    assert behavior._track_outside_counter[1] == 0
+    assert behavior._track_inside[1]
+
+
+def test_min_leave_frames_default():
+    zone = Zone(name="test_zone", label="Test Zone", points=[[0, 0], [100, 0], [100, 100], [0, 100]])
+    behavior = LeaveZoneBehavior({"min_stay_frames": 2}, zones=[zone])
+
+    inside = _make_person(1, (40, 40, 60, 60))
+    behavior.process_frame([inside], None, 0, 0.0)
+    behavior.process_frame([inside], None, 1, 0.033)
+
+    outside = _make_person(1, (200, 200, 220, 220))
+    events = behavior.process_frame([outside], None, 2, 0.066)
+    assert len(events) == 0
+    assert behavior._track_outside_counter[1] == 1
+
+    events = behavior.process_frame([outside], None, 3, 0.099)
+    assert len(events) == 0
+    assert behavior._track_outside_counter[1] == 2
+
+    events = behavior.process_frame([outside], None, 4, 0.133)
+    assert len(events) == 1
+    assert behavior._track_inside[1] is False

@@ -12,10 +12,10 @@ class LeaveZoneBehavior(BaseBehavior):
         super().__init__(params, zones=zones)
         self._track_inside: dict[int, bool] = {}
         self._track_inside_counter: dict[int, int] = {}
+        self._track_outside_counter: dict[int, int] = {}
         self._track_inside_zones: dict[int, set[str]] = {}
         self._last_leave_frame: dict[int, int] = {}
         self._last_leave_zones: dict[int, list[str]] = {}
-        self._missing_frames: dict[int, int] = {}
 
     def _validate_params(self):
         if len(self.zones) == 0:
@@ -30,44 +30,6 @@ class LeaveZoneBehavior(BaseBehavior):
 
     def process_frame(self, people, frame, frame_idx, timestamp) -> list[Event]:
         new_events = []
-
-        current_track_ids = {p.track_id for p in people}
-        max_missing = self.params.get("max_missing_frames", 15)
-
-        for tid in list(self._track_inside.keys()):
-            if self._track_inside.get(tid, False) and tid not in current_track_ids:
-                self._missing_frames[tid] = self._missing_frames.get(tid, 0) + 1
-                if self._missing_frames[tid] >= max_missing:
-                    inside_zones = sorted(self._track_inside_zones.get(tid, set()))
-                    event = Event(
-                        track_id=tid,
-                        start_frame=frame_idx,
-                        end_frame=frame_idx,
-                        start_time=timestamp,
-                        end_time=timestamp,
-                        max_confidence=1.0,
-                        frames=[frame_idx],
-                        hand_sides=["none"],
-                        metadata={
-                            "side": "outside",
-                            "zone": inside_zones[0] if inside_zones else self.zones[0].name,
-                            "triggered_zones": inside_zones,
-                            "inside": False,
-                            "cause": "missing_track",
-                        },
-                    )
-                    event.behavior_name = self.name
-                    new_events.append(event)
-                    self._last_leave_frame[tid] = frame_idx
-                    self._last_leave_zones[tid] = inside_zones
-                    self._track_inside[tid] = False
-                    self._track_inside_counter[tid] = 0
-                    self._track_inside_zones.pop(tid, None)
-                    del self._missing_frames[tid]
-
-        for tid in current_track_ids:
-            if tid in self._missing_frames:
-                del self._missing_frames[tid]
 
         for person in people:
             result = self.detect_person(person, frame, frame_idx, timestamp)
@@ -90,17 +52,20 @@ class LeaveZoneBehavior(BaseBehavior):
     def detect_person(self, person, frame, frame_idx, timestamp) -> DetectionResult:
         tid = person.track_id
         min_stay = self.params.get("min_stay_frames", 10)
+        min_leave = self.params.get("min_leave_frames", 3)
         bbox = person.bbox
-        is_inside = any(z.intersects_bbox(bbox) for z in self.zones)
-        inside_zones = {z.name for z in self.zones if z.intersects_bbox(bbox)}
+        is_inside = any(z.contains_bbox_center(bbox) for z in self.zones)
+        inside_zones = {z.name for z in self.zones if z.contains_bbox_center(bbox)}
         first_zone = self.zones[0].name
 
         if tid not in self._track_inside:
             self._track_inside[tid] = False
             self._track_inside_counter[tid] = 0
+            self._track_outside_counter[tid] = 0
             self._track_inside_zones[tid] = set()
 
         if is_inside:
+            self._track_outside_counter[tid] = 0
             self._track_inside_counter[tid] += 1
             self._track_inside_zones.setdefault(tid, set()).update(inside_zones)
             if self._track_inside_counter[tid] >= min_stay:
@@ -115,19 +80,31 @@ class LeaveZoneBehavior(BaseBehavior):
                 },
             )
         else:
+            self._track_inside_counter[tid] = 0
             if self._track_inside.get(tid, False):
-                left_zones = sorted(self._track_inside_zones.pop(tid, set()))
-                self._track_inside[tid] = False
-                self._track_inside_counter[tid] = 0
-                self._last_leave_frame[tid] = frame_idx
-                self._last_leave_zones[tid] = left_zones
+                self._track_outside_counter[tid] += 1
+                if self._track_outside_counter[tid] >= min_leave:
+                    left_zones = sorted(self._track_inside_zones.pop(tid, set()))
+                    self._track_inside[tid] = False
+                    self._track_outside_counter[tid] = 0
+                    self._last_leave_frame[tid] = frame_idx
+                    self._last_leave_zones[tid] = left_zones
+                    return DetectionResult(
+                        track_id=tid, detected=True, confidence=1.0,
+                        metadata={
+                            "side": "outside",
+                            "zone": left_zones[0] if left_zones else first_zone,
+                            "triggered_zones": left_zones,
+                            "inside": False,
+                        },
+                    )
                 return DetectionResult(
-                    track_id=tid, detected=True, confidence=1.0,
+                    track_id=tid, detected=False, confidence=0.0,
                     metadata={
-                        "side": "outside",
-                        "zone": left_zones[0] if left_zones else first_zone,
-                        "triggered_zones": left_zones,
-                        "inside": False,
+                        "side": "none",
+                        "zone": first_zone,
+                        "triggered_zones": sorted(self._track_inside_zones.get(tid, set())),
+                        "inside": True,
                     },
                 )
             return DetectionResult(
