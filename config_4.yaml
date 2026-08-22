@@ -1,30 +1,63 @@
 crop:
-- 868
-- 171
-- 810
-- 876
+- 241
+- 190
+- 845
+- 890
 model:
   path: yolo11n-pose.pt
   conf: 0.3
   iou: 0.2
 output:
-  dir: ./outputs/video3
+  dir: ./outputs/RAI7-1
   visualize: true
   context_seconds: 5
   crop_padding: 10
   debug_keypoints: true
 zones:
+  PHC:
+    label: PHC
+    points:
+    - - 166.0
+      - 283.0
+    - - 230.0
+      - 413.0
+    - - 265.0
+      - 356.0
+    - - 226.0
+      - 237.0
+  PHC_2:
+    label: PHC_2
+    points:
+    - - 299.0
+      - 165.0
+    - - 338.0
+      - 248.0
+    - - 377.0
+      - 191.0
+    - - 329.0
+      - 124.0
+  PHC_3:
+    label: PHC_3
+    points:
+    - - 372.0
+      - 83.0
+    - - 396.0
+      - 145.0
+    - - 421.0
+      - 106.0
+    - - 400.0
+      - 43.0
   Leave:
     label: Leave
     points:
-    - - 200.0
-      - 18.0
-    - - 216.0
-      - 837.0
-    - - 580.0
-      - 812.0
-    - - 343.0
-      - 23.0
+    - - 570.0
+      - 43.0
+    - - 467.0
+      - 867.0
+    - - 813.0
+      - 875.0
+    - - 674.0
+      - 45.0
 behaviors:
 - name: hand_to_head
   enabled: false
@@ -43,18 +76,20 @@ behaviors:
     - Leave
     min_stay_frames: 60
     leave_flash_frames: 20
-    min_leave_frames: 4
-    max_missing_frames: 60
 - name: hand_in_zone
-  enabled: false
+  enabled: true
   params:
+    zones:
+    - PHC
+    - PHC_2
+    - PHC_3
     hand: any
     min_duration_frames: 5
     confirmation_frames: 20
     max_gap_frames: 5
     min_event_frames: 30
 - name: head_turn
-  enabled: false
+  enabled: true
   params:
     turn_threshold_ratio: 0.3
     window_frames: 90
@@ -79,10 +114,8 @@ behaviors:
     max_gap_frames: 10
     min_event_frames: 60
 - name: hand_snatch_object
-  enabled: true
+  enabled: false
   params:
-    zones:
-    - Hand_Shake_OBJ
     min_grasp_frames: 3
     snatch_velocity_ratio: 0.15
     approach_window: 10

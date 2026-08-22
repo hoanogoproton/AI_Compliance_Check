@@ -437,26 +437,18 @@ class StepConfig(QWidget):
             self.default_badge.setVisible(False)
         except Exception:
             self.default_badge.setVisible(True)
-            from detection.config import (
-                CONFIRMATION_FRAMES, DISTANCE_THRESHOLD_RATIO, HEAD_KEYPOINT_CONFIDENCE_THRESHOLD,
-                KEYPOINT_CONFIDENCE_THRESHOLD, MAX_GAP_FRAMES, MIN_EVENT_FRAMES, VERTICAL_OFFSET_RATIO,
-            )
             cfg = {
                 "model": {"path": "yolo11n-pose.pt", "conf": 0.3, "iou": 0.5},
                 "output": {"dir": "./outputs", "visualize": True, "context_seconds": 5, "crop_padding": 20, "debug_keypoints": False},
                 "zones": {},
-                "behaviors": [{
-                    "name": "hand_to_head", "enabled": True,
-                    "params": {
-                        "distance_threshold_ratio": DISTANCE_THRESHOLD_RATIO,
-                        "vertical_offset_ratio": VERTICAL_OFFSET_RATIO,
-                        "keypoint_conf_threshold": KEYPOINT_CONFIDENCE_THRESHOLD,
-                        "head_keypoint_conf_threshold": HEAD_KEYPOINT_CONFIDENCE_THRESHOLD,
-                        "confirmation_frames": CONFIRMATION_FRAMES,
-                        "max_gap_frames": MAX_GAP_FRAMES,
-                        "min_event_frames": MIN_EVENT_FRAMES,
-                    },
-                }],
+                "behaviors": [
+                    {
+                        "name": name,
+                        "enabled": name == "hand_to_head",
+                        "params": {p[0]: p[4] for p in params if p[1] not in ("zone_multi", str)},
+                    }
+                    for name, params in BEHAVIOR_PARAMS.items()
+                ],
             }
             self._populate_from_config(cfg)
             self.main_window.config_data = cfg

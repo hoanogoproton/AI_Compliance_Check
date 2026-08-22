@@ -17,11 +17,11 @@ def create_video_writer(path, fourcc_str, fps, size):
             seen.add(c)
             deduped.append(c)
 
-    last_writer = None
     for code in deduped:
         fourcc = cv2.VideoWriter_fourcc(*code)
         writer = cv2.VideoWriter(str(path), fourcc, fps, even_size)
         if writer.isOpened():
             return writer
-        last_writer = writer
-    return last_writer
+    raise RuntimeError(
+        f"Could not open video writer at '{path}' — none of {deduped} codecs worked"
+    )

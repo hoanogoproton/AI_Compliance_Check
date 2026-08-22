@@ -228,7 +228,8 @@ def export_outputs(
 
             if event_id not in writers:
                 writers[event_id] = create_video_writer(clip_path, "mp4v", fps, (target_w, target_h))
-            writers[event_id].write(crop)
+            if writers[event_id].isOpened():
+                writers[event_id].write(crop)
 
             # Debug clip with keypoints overlay
             if debug_keypoints and person_data is not None:
@@ -239,7 +240,8 @@ def export_outputs(
                 if event_id not in debug_writers:
                     debug_path = clip_path.with_stem(clip_path.stem + "_debug")
                     debug_writers[event_id] = create_video_writer(debug_path, "mp4v", fps, (target_w, target_h))
-                debug_writers[event_id].write(debug_crop)
+                if debug_writers[event_id].isOpened():
+                    debug_writers[event_id].write(debug_crop)
 
     for w in writers.values():
         w.release()
@@ -427,7 +429,8 @@ def export_single_event(
 
         if writer is None:
             writer = create_video_writer(clip_path, "mp4v", fps, (target_w, target_h))
-        writer.write(crop)
+        if writer.isOpened():
+            writer.write(crop)
 
         if debug_keypoints and person_data is not None:
             kpts = person_data["keypoints"]
@@ -447,7 +450,8 @@ def export_single_event(
             if debug_writer is None:
                 debug_path = clip_path.with_stem(clip_path.stem + "_debug")
                 debug_writer = create_video_writer(debug_path, "mp4v", fps, (debug_crop.shape[1], debug_crop.shape[0]))
-            debug_writer.write(debug_crop)
+            if debug_writer.isOpened():
+                debug_writer.write(debug_crop)
 
     if writer is not None:
         writer.release()

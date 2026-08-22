@@ -24,7 +24,8 @@ class HandSnatchObjectBehavior(BaseBehavior):
         self._wrist_history: dict[tuple[int, str], deque] = {}
         self._inside_state: dict[tuple[int, str], bool] = {}
         self._entry_frame: dict[tuple[int, str], int] = {}
-        self._last_velocity: dict[tuple[int, str], float] = {}
+        self._grasp_start: dict[tuple[int, str], int] = {}
+        self._grasp_count: dict[tuple[int, str], int] = {}
         self._last_detections: dict[int, bool] = {}
 
     def _validate_params(self):
@@ -107,6 +108,14 @@ class HandSnatchObjectBehavior(BaseBehavior):
             entry_detected = in_zone and not prev_inside
             exit_detected = not in_zone and prev_inside
 
+            if entry_detected:
+                self._entry_frame[key] = frame_idx
+                self._grasp_start[key] = frame_idx
+                self._grasp_count[key] = 0
+
+            if in_zone and prev_inside:
+                self._grasp_count[key] = self._grasp_count.get(key, 0) + 1
+
             if exit_detected:
                 grasp_frames = frame_idx - self._entry_frame.get(key, frame_idx)
                 if grasp_frames >= min_grasp:
@@ -132,9 +141,6 @@ class HandSnatchObjectBehavior(BaseBehavior):
                                 "triggered_zones": sorted(triggered_zones),
                             },
                         )
-
-            if in_zone:
-                self._entry_frame.setdefault(key, frame_idx)
 
             if in_zone and prev_inside:
                 norm_v, velocities = self._compute_normalized_velocity(history, shoulder_width)

@@ -60,9 +60,13 @@ def _reader_worker(cap, read_queue, total_frames, crop_region):
         if crop_region:
             x, y, w, h = crop_region
             h_f, w_f = frame.shape[:2]
+            if y >= h_f or x >= w_f:
+                break
             x_end = min(x + w, w_f)
             y_end = min(y + h, h_f)
             frame = frame[y:y_end, x:x_end]
+            if frame.size == 0:
+                break
         read_queue.put((frame_idx, frame))
     read_queue.put(None)
 
@@ -219,21 +223,19 @@ def run_pipeline(
     writer = None
     writer_size = None
     if visualize:
-        ret, first_frame = cap.read()
-        if ret:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-            if crop_region:
-                cx, cy, cw, ch = crop_region
-                fh, fw = first_frame.shape[:2]
-                cw = min(cw, fw - cx)
-                ch = min(ch, fh - cy)
-                h, w = ch, cw
-            else:
-                h, w = first_frame.shape[:2]
-            writer_size = (w // 2 * 2, h // 2 * 2)
-            writer = create_video_writer(
-                output_path / f"{video_stem}_annotated_video.mp4", "mp4v", fps, writer_size
-            )
+        raw_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        raw_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        if crop_region:
+            cx, cy, cw, ch = crop_region
+            cw = min(cw, raw_w - cx)
+            ch = min(ch, raw_h - cy)
+            w, h = cw, ch
+        else:
+            w, h = raw_w, raw_h
+        writer_size = (w // 2 * 2, h // 2 * 2)
+        writer = create_video_writer(
+            output_path / f"{video_stem}_annotated_video.mp4", "mp4v", fps, writer_size
+        )
 
     read_queue = queue.Queue(maxsize=30)
     write_queue = queue.Queue(maxsize=30)
@@ -305,7 +307,9 @@ def run_pipeline(
                     for z in behavior.zones:
                         is_active = zone_active.get(z.name, False)
                         frame = draw_zone(frame, z, is_active)
-            if writer is not None:
+            if writer is not None and writer.isOpened():
+                if frame.size == 0:
+                    continue
                 if frame.shape[1] != writer_size[0] or frame.shape[0] != writer_size[1]:
                     frame = cv2.resize(frame, writer_size)
                 writer.write(frame)
