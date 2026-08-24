@@ -95,3 +95,32 @@ def compute_body_orientation(kpts: np.ndarray) -> float | None:
 def angular_difference_deg(a: float, b: float) -> float:
     diff = abs(a - b)
     return min(diff, 180.0 - diff)
+
+
+def face_visibility_score(
+    kpts: np.ndarray,
+    min_conf: float = KEYPOINT_CONFIDENCE_THRESHOLD,
+) -> float:
+    face_indices = [0, 1, 2, 3, 4]
+    if kpts.shape[0] <= max(face_indices):
+        return 0.0
+    visible = sum(
+        1 for idx in face_indices
+        if float(kpts[idx, 2]) >= min_conf
+    )
+    return visible / len(face_indices)
+
+
+def is_body_trackable(
+    kpts: np.ndarray,
+    min_conf: float = KEYPOINT_CONFIDENCE_THRESHOLD,
+    min_visible: int = 2,
+) -> bool:
+    body_indices = [5, 6, 11, 12]
+    if kpts.shape[0] <= max(body_indices):
+        return False
+    visible = sum(
+        1 for idx in body_indices
+        if float(kpts[idx, 2]) >= min_conf
+    )
+    return visible >= min_visible

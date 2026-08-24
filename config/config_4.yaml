@@ -1,0 +1,145 @@
+crop:
+- 241
+- 190
+- 845
+- 890
+model:
+  path: yolo11n-pose.pt
+  conf: 0.3
+  iou: 0.2
+output:
+  dir: ./outputs/RAI7-1
+  visualize: true
+  context_seconds: 5
+  crop_padding: 10
+  debug_keypoints: true
+zones:
+  PHC:
+    label: PHC
+    points:
+    - - 186.0
+      - 287.0
+    - - 222.0
+      - 399.0
+    - - 283.0
+      - 413.0
+    - - 314.0
+      - 348.0
+    - - 220.0
+      - 258.0
+  PHC_2:
+    label: PHC_2
+    points:
+    - - 310.0
+      - 169.0
+    - - 323.0
+      - 219.0
+    - - 376.0
+      - 243.0
+    - - 399.0
+      - 215.0
+    - - 328.0
+      - 145.0
+  PHC_3:
+    label: PHC_3
+    points:
+    - - 381.0
+      - 84.0
+    - - 389.0
+      - 122.0
+    - - 433.0
+      - 152.0
+    - - 462.0
+      - 113.0
+    - - 400.0
+      - 64.0
+  Leave:
+    label: Leave
+    points:
+    - - 570.0
+      - 43.0
+    - - 467.0
+      - 867.0
+    - - 813.0
+      - 875.0
+    - - 674.0
+      - 45.0
+behaviors:
+- name: hand_to_head
+  enabled: false
+  params:
+    distance_threshold_ratio: 0.9
+    vertical_offset_ratio: 0.2
+    keypoint_conf_threshold: 0.5
+    head_keypoint_conf_threshold: 0.2
+    confirmation_frames: 30
+    max_gap_frames: 10
+    min_event_frames: 30
+- name: leave_zone
+  enabled: true
+  params:
+    zones:
+    - Leave
+    min_stay_frames: 60
+    leave_flash_frames: 20
+- name: hand_in_zone
+  enabled: true
+  params:
+    zones:
+    - PHC
+    - PHC_2
+    - PHC_3
+    hand: any
+    min_duration_frames: 5
+    confirmation_frames: 20
+    max_gap_frames: 5
+    min_event_frames: 30
+- name: head_turn
+  enabled: false
+  params:
+    turn_threshold_ratio: 0.3
+    window_frames: 180
+    max_turns: 2
+    confirmation_frames: 30
+    max_gap_frames: 10
+    min_event_frames: 30
+- name: hand_shake_object
+  enabled: false
+  params:
+    window_frames: 40
+    min_reversals: 3
+    min_displacement_ratio: 0.01
+    keypoint_conf_threshold: 0.5
+- name: body_turn
+  enabled: true
+  params:
+    min_angle: 45.0
+    window_frames: 15
+    velocity_threshold: 10.0
+    confirmation_frames: 30
+    max_gap_frames: 10
+    min_event_frames: 60
+- name: hand_snatch_object
+  enabled: false
+  params:
+    min_grasp_frames: 3
+    snatch_velocity_ratio: 0.15
+    approach_window: 10
+    velocity_baseline_ratio: 2.0
+    keypoint_conf_threshold: 0.5
+    confirmation_frames: 10
+    max_gap_frames: 10
+    min_event_frames: 15
+- name: head_turn_away
+  enabled: true
+  params:
+    min_face_visible_frames: 3
+    min_face_hidden_frames: 5
+    face_confidence_threshold: 0.3
+    body_confidence_threshold: 0.3
+    body_min_visible_keypoints: 2
+    window_frames: 180
+    max_turns: 1
+    confirmation_frames: 5
+    max_gap_frames: 10
+    min_event_frames: 30

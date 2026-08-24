@@ -17,6 +17,7 @@ class StepZones(QWidget):
         self.main_window = main_window
         self._zones: dict[str, Zone] = {}
         self._crop_region: tuple[int, int, int, int] | None = None
+        self._editing_zone: str | None = None
 
         layout = QVBoxLayout(self)
 
@@ -59,11 +60,17 @@ class StepZones(QWidget):
         self.save_zone_btn = QPushButton("Save Zone")
         self.save_zone_btn.setObjectName("PrimaryButton")
         self.save_zone_btn.clicked.connect(self._save_zone)
-        self.clear_btn = QPushButton("Clear Points")
-        self.clear_btn.clicked.connect(self.canvas.clear_points)
+        self.clear_btn = QPushButton("Clear")
+        self.clear_btn.clicked.connect(self._clear_edit)
         btn_row.addWidget(self.save_zone_btn)
         btn_row.addWidget(self.clear_btn)
         right.addLayout(btn_row)
+
+        edit_hint = QLabel()
+        edit_hint.setObjectName("Subtitle")
+        edit_hint.setVisible(False)
+        right.addWidget(edit_hint)
+        self._edit_hint = edit_hint
 
         right.addWidget(QLabel("Existing Zones:"))
         self.zone_list = QListWidget()
@@ -90,7 +97,7 @@ class StepZones(QWidget):
         self.canvas.set_frame(rgb)
 
     def _on_points_changed(self, points):
-        pass
+        self.save_zone_btn.setEnabled(len(points) >= 3)
 
     def _load_zones_from_config(self):
         self._zones = {}
@@ -122,15 +129,21 @@ class StepZones(QWidget):
             self.main_window.show_error("Error", "A zone needs at least 3 points")
             return
 
+        is_update = self._editing_zone is not None
+        old_name = self._editing_zone
+
+        if is_update and old_name != name:
+            self._zones.pop(old_name, None)
+
         self._zones[name] = Zone(name=name, label=label, points=points)
         self._persist_zones()
 
-        self.canvas.clear_points()
-        self.name_edit.clear()
-        self.label_edit.clear()
+        self._clear_edit()
         self._refresh_zone_list()
         self.main_window.on_zones_changed()
-        self.main_window.show_info("Saved", f"Zone '{name}' saved")
+
+        verb = "Updated" if is_update else "Saved"
+        self.main_window.show_info(verb, f"Zone '{name}' {verb.lower()}")
 
     def _delete_zone(self):
         item = self.zone_list.currentItem()
@@ -145,6 +158,8 @@ class StepZones(QWidget):
             return
 
         self._zones.pop(name, None)
+        if self._editing_zone == name:
+            self._clear_edit()
         self._persist_zones()
         self._refresh_zone_list()
         self.main_window.on_zones_changed()
@@ -152,8 +167,25 @@ class StepZones(QWidget):
     def _zone_selected(self, item: QListWidgetItem):
         name = item.text().split(" (")[0]
         zone = self._zones.get(name)
-        if zone:
-            self.canvas.set_points(zone.points)
+        if not zone:
+            return
+        self._editing_zone = name
+        self.name_edit.setText(name)
+        self.label_edit.setText(zone.label)
+        self.canvas.set_points(zone.points)
+        self.save_zone_btn.setText("Update Zone")
+        self.save_zone_btn.setEnabled(len(zone.points) >= 3)
+        self._edit_hint.setText(f"Editing zone '{name}' — modify points or fields, then click Update")
+        self._edit_hint.setVisible(True)
+
+    def _clear_edit(self):
+        self._editing_zone = None
+        self.canvas.clear_points()
+        self.name_edit.clear()
+        self.label_edit.clear()
+        self.save_zone_btn.setText("Save Zone")
+        self.save_zone_btn.setEnabled(False)
+        self._edit_hint.setVisible(False)
 
     def _refresh_zone_list(self):
         self.zone_list.clear()

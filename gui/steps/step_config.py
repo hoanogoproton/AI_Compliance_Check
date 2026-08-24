@@ -45,6 +45,18 @@ BEHAVIOR_PARAMS = {
         ("max_gap_frames", int, 0, 300, 10),
         ("min_event_frames", int, 1, 300, 30),
     ],
+    "head_turn_away": [
+        ("min_face_visible_frames", int, 1, 60, 3),
+        ("min_face_hidden_frames", int, 1, 60, 5),
+        ("face_confidence_threshold", float, 0.1, 1.0, 0.4),
+        ("body_confidence_threshold", float, 0.1, 1.0, 0.4),
+        ("body_min_visible_keypoints", int, 1, 4, 2),
+        ("window_frames", int, 1, 600, 90),
+        ("max_turns", int, 1, 50, 3),
+        ("confirmation_frames", int, 1, 300, 30),
+        ("max_gap_frames", int, 0, 300, 10),
+        ("min_event_frames", int, 1, 300, 30),
+    ],
     "hand_shake_object": [
         ("zones", "zone_multi", None, None, None),
         ("window_frames", int, 1, 300, 40),
@@ -416,7 +428,20 @@ class StepConfig(QWidget):
             pt_count = len(zdata.get("points", []))
             self.zone_list.addItem(f"{zname} ({pt_count} points)")
 
-        self._rebuild_behavior_editors(config.get("behaviors", []), list(zones.keys()))
+        self._rebuild_behavior_editors(self._merge_behaviors(config.get("behaviors", [])), list(zones.keys()))
+
+    def _merge_behaviors(self, behaviors: list[dict]) -> list[dict]:
+        existing_names = {b["name"] for b in behaviors}
+        merged = list(behaviors)
+        registry = get_registry()
+        for name, params in BEHAVIOR_PARAMS.items():
+            if name not in existing_names and name in registry:
+                merged.append({
+                    "name": name,
+                    "enabled": False,
+                    "params": {p[0]: p[4] for p in params if p[1] not in ("zone_multi", str)},
+                })
+        return merged
 
     def _rebuild_behavior_editors(self, behaviors: list[dict], zone_names: list[str]):
         for editor in self._behavior_editors:

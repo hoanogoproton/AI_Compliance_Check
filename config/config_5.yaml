@@ -8,56 +8,29 @@ model:
   conf: 0.3
   iou: 0.2
 output:
-  dir: ./outputs/RAI7-1
+  dir: ./outputs/RAI7-2
   visualize: true
   context_seconds: 5
   crop_padding: 10
   debug_keypoints: true
 zones:
-  PHC:
-    label: PHC
+  Work:
+    label: Work
     points:
-    - - 166.0
-      - 283.0
-    - - 230.0
-      - 413.0
-    - - 265.0
-      - 356.0
-    - - 226.0
-      - 237.0
-  PHC_2:
-    label: PHC_2
-    points:
-    - - 299.0
-      - 165.0
-    - - 338.0
-      - 248.0
-    - - 377.0
-      - 191.0
-    - - 329.0
-      - 124.0
-  PHC_3:
-    label: PHC_3
-    points:
-    - - 372.0
-      - 83.0
-    - - 396.0
-      - 145.0
-    - - 421.0
-      - 106.0
-    - - 400.0
-      - 43.0
-  Leave:
-    label: Leave
-    points:
-    - - 570.0
-      - 43.0
-    - - 467.0
-      - 867.0
-    - - 813.0
-      - 875.0
-    - - 674.0
-      - 45.0
+    - - 448.0
+      - 229.0
+    - - 452.0
+      - 117.0
+    - - 838.0
+      - 392.0
+    - - 830.0
+      - 832.0
+    - - 631.0
+      - 876.0
+    - - 290.0
+      - 516.0
+    - - 280.0
+      - 231.0
 behaviors:
 - name: hand_to_head
   enabled: false
@@ -73,16 +46,12 @@ behaviors:
   enabled: true
   params:
     zones:
-    - Leave
+    - Work
     min_stay_frames: 60
     leave_flash_frames: 20
 - name: hand_in_zone
-  enabled: true
+  enabled: false
   params:
-    zones:
-    - PHC
-    - PHC_2
-    - PHC_3
     hand: any
     min_duration_frames: 5
     confirmation_frames: 20
@@ -92,7 +61,7 @@ behaviors:
   enabled: true
   params:
     turn_threshold_ratio: 0.3
-    window_frames: 90
+    window_frames: 180
     max_turns: 2
     confirmation_frames: 30
     max_gap_frames: 10
@@ -105,7 +74,7 @@ behaviors:
     min_displacement_ratio: 0.01
     keypoint_conf_threshold: 0.5
 - name: body_turn
-  enabled: true
+  enabled: false
   params:
     min_angle: 45.0
     window_frames: 15
@@ -124,3 +93,16 @@ behaviors:
     confirmation_frames: 10
     max_gap_frames: 10
     min_event_frames: 15
+- name: head_turn_away
+  enabled: true
+  params:
+    min_face_visible_frames: 3
+    min_face_hidden_frames: 5
+    face_confidence_threshold: 0.3
+    body_confidence_threshold: 0.3
+    body_min_visible_keypoints: 2
+    window_frames: 180
+    max_turns: 1
+    confirmation_frames: 5
+    max_gap_frames: 10
+    min_event_frames: 30

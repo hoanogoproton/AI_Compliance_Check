@@ -44,3 +44,4 @@ Saves zones into `config.yaml` (or specified `--config` file).
 pytest tests/ -v
 ```
 python -m gui.app
+python debug_tracks.py --video "videos/1.mp4" --config config/config.yaml
