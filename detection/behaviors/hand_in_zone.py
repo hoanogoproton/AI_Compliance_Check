@@ -10,6 +10,7 @@ class HandInZoneBehavior(BaseBehavior):
 
     def __init__(self, params: dict, zones: list[Zone] | None = None):
         super().__init__(params, zones=zones)
+        self._frame_triggered_zones: set[str] = set()
 
     def _validate_params(self):
         if len(self.zones) == 0:
@@ -37,6 +38,8 @@ class HandInZoneBehavior(BaseBehavior):
                     in_zone_sides.append(side_name)
                     triggered_zones.add(z.name)
 
+        self._frame_triggered_zones.update(triggered_zones)
+
         if not in_zone_sides:
             return DetectionResult(
                 track_id=person.track_id, detected=False, confidence=0.0,
@@ -53,3 +56,11 @@ class HandInZoneBehavior(BaseBehavior):
                 "triggered_zones": sorted(triggered_zones),
             },
         )
+
+    def process_frame(self, people, frame, frame_idx, timestamp):
+        self._frame_triggered_zones.clear()
+        return super().process_frame(people, frame, frame_idx, timestamp)
+
+    @property
+    def current_triggered_zones(self) -> set[str]:
+        return self._frame_triggered_zones

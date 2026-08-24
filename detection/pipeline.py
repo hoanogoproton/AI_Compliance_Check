@@ -1,5 +1,6 @@
 import queue
 import threading
+import traceback
 from collections.abc import Callable
 from pathlib import Path
 
@@ -54,19 +55,23 @@ def _build_behaviors(config: dict) -> list[BaseBehavior]:
 
 def _reader_worker(cap, read_queue, total_frames, crop_region):
     for frame_idx in range(total_frames):
-        ret, frame = cap.read()
-        if not ret:
+        try:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            if crop_region:
+                x, y, w, h = crop_region
+                h_f, w_f = frame.shape[:2]
+                if y >= h_f or x >= w_f:
+                    break
+                x_end = min(x + w, w_f)
+                y_end = min(y + h, h_f)
+                frame = frame[y:y_end, x:x_end]
+                if frame.size == 0:
+                    break
+        except Exception as e:
+            print(f"[ReaderWorker] OpenCV error at frame {frame_idx}: {e}", flush=True)
             break
-        if crop_region:
-            x, y, w, h = crop_region
-            h_f, w_f = frame.shape[:2]
-            if y >= h_f or x >= w_f:
-                break
-            x_end = min(x + w, w_f)
-            y_end = min(y + h, h_f)
-            frame = frame[y:y_end, x:x_end]
-            if frame.size == 0:
-                break
         read_queue.put((frame_idx, frame))
     read_queue.put(None)
 
@@ -82,7 +87,14 @@ def _inference_worker(
         frame_idx, frame = item
         timestamp = frame_idx / fps
 
-        people = process_frame(model, frame, conf=conf, iou=iou)
+        try:
+            people = process_frame(model, frame, conf=conf, iou=iou)
+        except Exception as e:
+            print(f"[InferenceWorker] process_frame error at frame {frame_idx}: {e}", flush=True)
+            traceback.print_exc()
+            # Put an error sentinel to signal main loop
+            write_queue.put(("ERROR", frame_idx, str(e)))
+            continue
         all_new_events = []
         frame_data = {}
 
@@ -138,6 +150,8 @@ def _inference_worker(
                             fd["behaviors"].get(behavior.name, {}).get("detected")
                             for fd in frame_data.values()
                         )
+                        if hasattr(behavior, 'current_triggered_zones'):
+                            active = zn in behavior.current_triggered_zones
                         state = "active" if active else "inactive"
                     zone_active[zn] = state
 
@@ -215,7 +229,7 @@ def run_pipeline(
         total_frames = 999999
 
     frame_data_cache = {}
-    events = []
+    events: list[Event] = []
     metadata_events = []
     event_counter = 0
     exported_event_ids: set[int] = set()
@@ -252,110 +266,142 @@ def run_pipeline(
     reader.start()
     inference.start()
 
-    progress = tqdm(total=total_frames, desc="Processing frames") if log_callback is None else None
-    if log_callback:
-        log_callback(f"Pipeline started for {video_path}")
-        log_callback(f"Model: {model_path}, Output: {output_dir}")
-        log_callback(f"Behaviors: {[b.name for b in behaviors]}")
-    while True:
-        item = write_queue.get()
-        if item is None:
-            break
-        frame_idx, frame, people, new_events, zone_active = item
+    try:
+        progress = tqdm(total=total_frames, desc="Processing frames") if log_callback is None else None
+        if log_callback:
+            log_callback(f"Pipeline started for {video_path}")
+            log_callback(f"Model: {model_path}, Output: {output_dir}")
+            log_callback(f"Behaviors: {[b.name for b in behaviors]}")
+        while True:
+            item = write_queue.get()
+            if item is None:
+                break
+            # Check for error sentinel from inference worker
+            if isinstance(item, tuple) and len(item) == 3 and item[0] == "ERROR":
+                _error_frame, error_msg = item[1], item[2]
+                if log_callback:
+                    log_callback(f"ERROR at frame {_error_frame}: {error_msg}")
+                if progress is not None:
+                    progress.close()
+                raise RuntimeError(f"Inference error at frame {_error_frame}: {error_msg}")
+            frame_idx, frame, people, new_events, zone_active = item
 
-        for ev in new_events:
-            event_counter += 1
-            meta = export_single_event(
-                ev,
-                event_counter,
-                video_path,
-                frame_data_cache,
-                output_path,
-                fps,
-                context_seconds=context_seconds,
-                padding=crop_padding,
-                debug_keypoints=debug_keypoints,
-                video_stem=video_stem,
-                zone_export_info=zones_export,
-                crop_region=crop_region,
-            )
-            metadata_events.append(meta)
-            exported_event_ids.add(id(ev))
-            if log_callback:
-                log_callback(
-                    f"  Event {meta['event_id']}: Track {meta['track_id']}, "
-                    f"Behavior: {meta.get('behavior', 'N/A')}, "
-                    f"Frames {meta['start_frame']}-{meta['end_frame']}, "
-                    f"Side: {meta['hand_side']}, Confidence: {meta['max_confidence']}"
-                )
-
-        if visualize:
-            for person in people:
-                fd = frame_data_cache.get(frame_idx, {}).get(person.track_id, {})
-                behaviors_data = fd.get("behaviors", {})
-                active_behavior_name = ""
-                for bname, bdata in behaviors_data.items():
-                    if bdata.get("detected"):
-                        active_behavior_name = bname
-                        break
-                frame = draw_skeleton(
-                    frame, person.keypoints, person.bbox, person.track_id,
-                    bool(active_behavior_name), active_behavior_name,
-                )
-            for behavior in behaviors:
-                if hasattr(behavior, 'zones') and behavior.zones:
-                    for z in behavior.zones:
-                        is_active = zone_active.get(z.name, False)
-                        frame = draw_zone(frame, z, is_active)
-            if writer is not None and writer.isOpened():
-                if frame.size == 0:
+            for ev in new_events:
+                event_counter += 1
+                try:
+                    meta = export_single_event(
+                        ev,
+                        event_counter,
+                        video_path,
+                        frame_data_cache,
+                        output_path,
+                        fps,
+                        context_seconds=context_seconds,
+                        padding=crop_padding,
+                        debug_keypoints=debug_keypoints,
+                        video_stem=video_stem,
+                        zone_export_info=zones_export,
+                        crop_region=crop_region,
+                    )
+                except Exception as e:
+                    if log_callback:
+                        log_callback(f"  Event export error (event {event_counter}): {e}")
                     continue
-                if frame.shape[1] != writer_size[0] or frame.shape[0] != writer_size[1]:
-                    frame = cv2.resize(frame, writer_size)
-                writer.write(frame)
+                metadata_events.append(meta)
+            if new_events:
+                exported_event_ids.add(id(ev))
+                if log_callback:
+                    log_callback(
+                        f"  Event {meta['event_id']}: Track {meta['track_id']}, "
+                        f"Behavior: {meta.get('behavior', 'N/A')}, "
+                        f"Frames {meta['start_frame']}-{meta['end_frame']}, "
+                        f"Side: {meta['hand_side']}, Confidence: {meta['max_confidence']}"
+                    )
+
+            # --- update progress for every processed frame ---
+            if progress is not None:
+                progress.update(1)
+            if progress_callback:
+                progress_callback(frame_idx + 1, total_frames)
+
+            # --- annotate and write output video for every frame ---
+            if visualize:
+                try:
+                    for person in people:
+                        fd = frame_data_cache.get(frame_idx, {}).get(person.track_id, {})
+                        behaviors_data = fd.get("behaviors", {})
+                        active_behavior_name = ""
+                        for bname, bdata in behaviors_data.items():
+                            if bdata.get("detected"):
+                                active_behavior_name = bname
+                                break
+                        frame = draw_skeleton(
+                            frame, person.keypoints, person.bbox, person.track_id,
+                            bool(active_behavior_name), active_behavior_name,
+                        )
+                    for behavior in behaviors:
+                        if hasattr(behavior, 'zones') and behavior.zones:
+                            for z in behavior.zones:
+                                is_active = zone_active.get(z.name, False)
+                                frame = draw_zone(frame, z, is_active)
+                    # write once per frame after all annotations are done
+                    if writer is not None and writer.isOpened():
+                        if frame.size == 0:
+                            continue
+                        if frame.shape[1] != writer_size[0] or frame.shape[0] != writer_size[1]:
+                            frame = cv2.resize(frame, writer_size)
+                        writer.write(frame)
+                except Exception as e:
+                    if log_callback:
+                        log_callback(f"  Visualization error at frame {frame_idx}: {e}")
+                    else:
+                        print(f"  Visualization error at frame {frame_idx}: {e}", flush=True)
+
         if progress is not None:
-            progress.update(1)
-        if progress_callback:
-            progress_callback(frame_idx + 1, total_frames)
-    if progress is not None:
-        progress.close()
+            progress.close()
 
-    inference.join()
-    reader.join()
+        inference.join()
+        reader.join()
 
-    for behavior in behaviors:
-        remaining = behavior.event_manager.finalize()
-        for ev in remaining:
-            ev.behavior_name = behavior.name
-        events.extend(remaining)
+        for behavior in behaviors:
+            remaining = behavior.event_manager.finalize()
+            for ev in remaining:
+                ev.behavior_name = behavior.name
+            events.extend(remaining)
 
-    for ev in events:
-        if isinstance(ev, Event) and ev.end_time == 0.0:
-            ev.end_time = total_frames / fps
+        for ev in events:
+            if isinstance(ev, Event) and ev.end_time == 0.0:
+                ev.end_time = total_frames / fps
 
-    for ev in events:
-        if id(ev) in exported_event_ids:
-            continue
-        event_counter += 1
-        meta = export_single_event(
-            ev,
-            event_counter,
-            video_path,
-            frame_data_cache,
-            output_path,
-            fps,
-            context_seconds=context_seconds,
-            padding=crop_padding,
-            debug_keypoints=debug_keypoints,
-            video_stem=video_stem,
-            zone_export_info=zones_export,
-            crop_region=crop_region,
-        )
-        metadata_events.append(meta)
+        for ev in events:
+            if id(ev) in exported_event_ids:
+                continue
+            event_counter += 1
+            try:
+                meta = export_single_event(
+                    ev,
+                    event_counter,
+                    video_path,
+                    frame_data_cache,
+                    output_path,
+                    fps,
+                    context_seconds=context_seconds,
+                    padding=crop_padding,
+                    debug_keypoints=debug_keypoints,
+                    video_stem=video_stem,
+                    zone_export_info=zones_export,
+                    crop_region=crop_region,
+                )
+            except Exception as e:
+                if log_callback:
+                    log_callback(f"  Post-pipeline export error (event {event_counter}): {e}")
+                continue
+            metadata_events.append(meta)
 
-    cap.release()
-    if writer is not None:
-        writer.release()
+    finally:
+        cap.release()
+        if writer is not None:
+            writer.release()
 
     write_metadata_files(metadata_events, video_path, output_path, fps, total_frames, video_stem)
 

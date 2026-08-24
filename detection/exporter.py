@@ -155,99 +155,102 @@ def export_outputs(
     fixed_crop_sizes = {}
     frame_h, frame_w = 0, 0
 
-    for f_idx in range(global_first, global_last + 1):
-        ret, frame = cap.read()
-        if not ret:
-            break
-        if frame_h == 0:
-            frame_h, frame_w = frame.shape[:2]
+    try:
+        for f_idx in range(global_first, global_last + 1):
+            ret, frame = cap.read()
+            if not ret:
+                break
+            if frame_h == 0:
+                frame_h, frame_w = frame.shape[:2]
 
-        for event, first_frame, last_frame, clip_path, event_id in event_infos:
-            if not (first_frame <= f_idx <= last_frame):
-                continue
+            for event, first_frame, last_frame, clip_path, event_id in event_infos:
+                if not (first_frame <= f_idx <= last_frame):
+                    continue
 
-            frame_data = all_frames_data.get(f_idx, {})
-            person_data = frame_data.get(event.track_id)
-            if person_data is not None:
-                last_known_bboxes[event_id] = person_data["bbox"]
+                frame_data = all_frames_data.get(f_idx, {})
+                person_data = frame_data.get(event.track_id)
+                if person_data is not None:
+                    last_known_bboxes[event_id] = person_data["bbox"]
 
-            bbox = last_known_bboxes.get(event_id)
-            if bbox is None:
-                continue
+                bbox = last_known_bboxes.get(event_id)
+                if bbox is None:
+                    continue
 
-            x1, y1, x2, y2 = bbox
-            cx = (x1 + x2) / 2.0
-            cy = (y1 + y2) / 2.0
-            bw = x2 - x1
-            bh = y2 - y1
+                x1, y1, x2, y2 = bbox
+                cx = (x1 + x2) / 2.0
+                cy = (y1 + y2) / 2.0
+                bw = x2 - x1
+                bh = y2 - y1
 
-            # Strong EMA on center → steady-cam effect
-            prev_cx, prev_cy = smoothed_centers.get(event_id, (cx, cy))
-            scx = CENTER_ALPHA * cx + (1.0 - CENTER_ALPHA) * prev_cx
-            scy = CENTER_ALPHA * cy + (1.0 - CENTER_ALPHA) * prev_cy
-            smoothed_centers[event_id] = (scx, scy)
+                # Strong EMA on center -> steady-cam effect
+                prev_cx, prev_cy = smoothed_centers.get(event_id, (cx, cy))
+                scx = CENTER_ALPHA * cx + (1.0 - CENTER_ALPHA) * prev_cx
+                scy = CENTER_ALPHA * cy + (1.0 - CENTER_ALPHA) * prev_cy
+                smoothed_centers[event_id] = (scx, scy)
 
-            # Lighter EMA on size to avoid sudden crop resize
-            prev_bw, prev_bh = smoothed_sizes.get(event_id, (bw, bh))
-            sbw = SIZE_ALPHA * bw + (1.0 - SIZE_ALPHA) * prev_bw
-            sbh = SIZE_ALPHA * bh + (1.0 - SIZE_ALPHA) * prev_bh
-            smoothed_sizes[event_id] = (sbw, sbh)
+                # Lighter EMA on size to avoid sudden crop resize
+                prev_bw, prev_bh = smoothed_sizes.get(event_id, (bw, bh))
+                sbw = SIZE_ALPHA * bw + (1.0 - SIZE_ALPHA) * prev_bw
+                sbh = SIZE_ALPHA * bh + (1.0 - SIZE_ALPHA) * prev_bh
+                smoothed_sizes[event_id] = (sbw, sbh)
 
-            # Lock crop size on first valid frame
-            crop_pad = max(padding, SMOOTHING_MIN_PADDING)
-            if event_id not in fixed_crop_sizes:
-                cw = int(sbw + 2 * crop_pad)
-                ch = int(sbh + 2 * crop_pad)
-                fixed_crop_sizes[event_id] = (cw, ch)
-            target_w, target_h = fixed_crop_sizes[event_id]
+                # Lock crop size on first valid frame
+                crop_pad = max(padding, SMOOTHING_MIN_PADDING)
+                if event_id not in fixed_crop_sizes:
+                    cw = int(sbw + 2 * crop_pad)
+                    ch = int(sbh + 2 * crop_pad)
+                    fixed_crop_sizes[event_id] = (cw, ch)
+                target_w, target_h = fixed_crop_sizes[event_id]
 
-            half_w = target_w // 2
-            half_h = target_h // 2
-            cx1 = int(scx - half_w)
-            cy1 = int(scy - half_h)
-            cx2 = cx1 + target_w
-            cy2 = cy1 + target_h
+                half_w = target_w // 2
+                half_h = target_h // 2
+                cx1 = int(scx - half_w)
+                cy1 = int(scy - half_h)
+                cx2 = cx1 + target_w
+                cy2 = cy1 + target_h
 
-            # Clamp to frame boundaries
-            cx1 = max(0, cx1)
-            cy1 = max(0, cy1)
-            cx2 = min(frame_w, cx2)
-            cy2 = min(frame_h, cy2)
+                # Clamp to frame boundaries
+                cx1 = max(0, cx1)
+                cy1 = max(0, cy1)
+                cx2 = min(frame_w, cx2)
+                cy2 = min(frame_h, cy2)
 
-            crop = frame[cy1:cy2, cx1:cx2]
-            if crop.size == 0:
-                continue
+                crop = frame[cy1:cy2, cx1:cx2]
+                if crop.size == 0:
+                    continue
 
-            # Pad with black if cropped region smaller than target
-            if crop.shape[1] != target_w or crop.shape[0] != target_h:
-                padded = np.zeros((target_h, target_w, 3), dtype=np.uint8)
-                ph = min(crop.shape[0], target_h)
-                pw = min(crop.shape[1], target_w)
-                padded[:ph, :pw] = crop[:ph, :pw]
-                crop = padded
+                # Pad with black if cropped region smaller than target
+                if crop.shape[1] != target_w or crop.shape[0] != target_h:
+                    padded = np.zeros((target_h, target_w, 3), dtype=np.uint8)
+                    ph = min(crop.shape[0], target_h)
+                    pw = min(crop.shape[1], target_w)
+                    padded[:ph, :pw] = crop[:ph, :pw]
+                    crop = padded
 
-            if event_id not in writers:
-                writers[event_id] = create_video_writer(clip_path, "mp4v", fps, (target_w, target_h))
-            if writers[event_id].isOpened():
-                writers[event_id].write(crop)
+                if event_id not in writers:
+                    writers[event_id] = create_video_writer(clip_path, "mp4v", fps, (target_w, target_h))
+                if writers[event_id].isOpened():
+                    writers[event_id].write(crop)
 
-            # Debug clip with keypoints overlay
-            if debug_keypoints and person_data is not None:
-                kpts = person_data["keypoints"]
-                detected = bool(person_data.get("detected", False))
-                debug_crop = crop.copy()
-                _draw_debug_overlay(debug_crop, bbox, kpts, cx1, cy1, f_idx, detected)
-                if event_id not in debug_writers:
-                    debug_path = clip_path.with_stem(clip_path.stem + "_debug")
-                    debug_writers[event_id] = create_video_writer(debug_path, "mp4v", fps, (target_w, target_h))
-                if debug_writers[event_id].isOpened():
-                    debug_writers[event_id].write(debug_crop)
-
-    for w in writers.values():
-        w.release()
-    for w in debug_writers.values():
-        w.release()
-    cap.release()
+                # Debug clip with keypoints overlay
+                if debug_keypoints and person_data is not None:
+                    kpts = person_data["keypoints"]
+                    detected = bool(person_data.get("detected", False))
+                    debug_crop = crop.copy()
+                    _draw_debug_overlay(debug_crop, bbox, kpts, cx1, cy1, f_idx, detected)
+                    if event_id not in debug_writers:
+                        debug_path = clip_path.with_stem(clip_path.stem + "_debug")
+                        debug_writers[event_id] = create_video_writer(debug_path, "mp4v", fps, (target_w, target_h))
+                    if debug_writers[event_id].isOpened():
+                        debug_writers[event_id].write(debug_crop)
+    except Exception as e:
+        raise RuntimeError(f"Export error: {e}") from e
+    finally:
+        for w in writers.values():
+            w.release()
+        for w in debug_writers.values():
+            w.release()
+        cap.release()
 
     metadata = {"source_video": str(video_path), "fps": fps, "total_frames": total_frames, "events": metadata_events}
     with open(output_dir / "metadata.json", "w") as f:
@@ -346,117 +349,120 @@ def export_single_event(
     frame_h, frame_w = 0, 0
     zone_crop_rect = None
 
-    for f_idx in range(first_frame, last_frame + 1):
-        ret, frame = cap.read()
-        if not ret:
-            break
-        if frame_h == 0:
-            frame_h, frame_w = frame.shape[:2]
-            if zone_export_info:
-                zone_crop_rect = _compute_zone_crop_rect([zi["zone"] for zi in zone_export_info], frame_w=frame_w, frame_h=frame_h)
+    try:
+        for f_idx in range(first_frame, last_frame + 1):
+            ret, frame = cap.read()
+            if not ret:
+                break
+            if frame_h == 0:
+                frame_h, frame_w = frame.shape[:2]
+                if zone_export_info:
+                    zone_crop_rect = _compute_zone_crop_rect([zi["zone"] for zi in zone_export_info], frame_w=frame_w, frame_h=frame_h)
 
-        if crop_region:
-            cx, cy, cw, ch = crop_region
-            x_end = min(cx + cw, frame_w)
-            y_end = min(cy + ch, frame_h)
-            frame = frame[cy:y_end, cx:x_end]
+            if crop_region:
+                cx, cy, cw, ch = crop_region
+                x_end = min(cx + cw, frame_w)
+                y_end = min(cy + ch, frame_h)
+                frame = frame[cy:y_end, cx:x_end]
 
-        frame_data = all_frames_data.get(f_idx, {})
-        person_data = frame_data.get(event.track_id)
-        if person_data is not None:
-            last_known_bbox = person_data["bbox"]
+            frame_data = all_frames_data.get(f_idx, {})
+            person_data = frame_data.get(event.track_id)
+            if person_data is not None:
+                last_known_bbox = person_data["bbox"]
 
-        if last_known_bbox is None:
-            continue
+            if last_known_bbox is None:
+                continue
 
-        frame_annotated = frame.copy()
-        for zi in (zone_export_info or []):
-            is_active = any(
-                fd.get("behaviors", {}).get(zi["behavior_name"], {}).get("detected", False)
-                for fd in frame_data.values()
-            )
-            frame_annotated = draw_zone(frame_annotated, zi["zone"], is_active)
+            frame_annotated = frame.copy()
+            for zi in (zone_export_info or []):
+                is_active = any(
+                    fd.get("behaviors", {}).get(zi["behavior_name"], {}).get("detected", False)
+                    for fd in frame_data.values()
+                )
+                frame_annotated = draw_zone(frame_annotated, zi["zone"], is_active)
 
-        x1, y1, x2, y2 = last_known_bbox
-        cx = (x1 + x2) / 2.0
-        cy = (y1 + y2) / 2.0
-        bw = x2 - x1
-        bh = y2 - y1
+            x1, y1, x2, y2 = last_known_bbox
+            cx = (x1 + x2) / 2.0
+            cy = (y1 + y2) / 2.0
+            bw = x2 - x1
+            bh = y2 - y1
 
-        if smoothed_center is None:
-            smoothed_center = (cx, cy)
-        prev_cx, prev_cy = smoothed_center
-        scx = CENTER_ALPHA * cx + (1.0 - CENTER_ALPHA) * prev_cx
-        scy = CENTER_ALPHA * cy + (1.0 - CENTER_ALPHA) * prev_cy
-        smoothed_center = (scx, scy)
+            if smoothed_center is None:
+                smoothed_center = (cx, cy)
+            prev_cx, prev_cy = smoothed_center
+            scx = CENTER_ALPHA * cx + (1.0 - CENTER_ALPHA) * prev_cx
+            scy = CENTER_ALPHA * cy + (1.0 - CENTER_ALPHA) * prev_cy
+            smoothed_center = (scx, scy)
 
-        if smoothed_size is None:
-            smoothed_size = (bw, bh)
-        prev_bw, prev_bh = smoothed_size
-        sbw = SIZE_ALPHA * bw + (1.0 - SIZE_ALPHA) * prev_bw
-        sbh = SIZE_ALPHA * bh + (1.0 - SIZE_ALPHA) * prev_bh
-        smoothed_size = (sbw, sbh)
+            if smoothed_size is None:
+                smoothed_size = (bw, bh)
+            prev_bw, prev_bh = smoothed_size
+            sbw = SIZE_ALPHA * bw + (1.0 - SIZE_ALPHA) * prev_bw
+            sbh = SIZE_ALPHA * bh + (1.0 - SIZE_ALPHA) * prev_bh
+            smoothed_size = (sbw, sbh)
 
-        crop_pad = max(padding, SMOOTHING_MIN_PADDING)
-        if fixed_crop_size is None:
-            cw = int(sbw + 2 * crop_pad)
-            ch = int(sbh + 2 * crop_pad)
-            fixed_crop_size = (cw, ch)
-        target_w, target_h = fixed_crop_size
+            crop_pad = max(padding, SMOOTHING_MIN_PADDING)
+            if fixed_crop_size is None:
+                cw = int(sbw + 2 * crop_pad)
+                ch = int(sbh + 2 * crop_pad)
+                fixed_crop_size = (cw, ch)
+            target_w, target_h = fixed_crop_size
 
-        half_w = target_w // 2
-        half_h = target_h // 2
-        cx1 = int(scx - half_w)
-        cy1 = int(scy - half_h)
-        cx2 = cx1 + target_w
-        cy2 = cy1 + target_h
+            half_w = target_w // 2
+            half_h = target_h // 2
+            cx1 = int(scx - half_w)
+            cy1 = int(scy - half_h)
+            cx2 = cx1 + target_w
+            cy2 = cy1 + target_h
 
-        cx1 = max(0, cx1)
-        cy1 = max(0, cy1)
-        cx2 = min(frame_w, cx2)
-        cy2 = min(frame_h, cy2)
+            cx1 = max(0, cx1)
+            cy1 = max(0, cy1)
+            cx2 = min(frame_w, cx2)
+            cy2 = min(frame_h, cy2)
 
-        crop = frame_annotated[cy1:cy2, cx1:cx2]
-        if crop.size == 0:
-            continue
+            crop = frame_annotated[cy1:cy2, cx1:cx2]
+            if crop.size == 0:
+                continue
 
-        if crop.shape[1] != target_w or crop.shape[0] != target_h:
-            padded = np.zeros((target_h, target_w, 3), dtype=np.uint8)
-            ph = min(crop.shape[0], target_h)
-            pw = min(crop.shape[1], target_w)
-            padded[:ph, :pw] = crop[:ph, :pw]
-            crop = padded
+            if crop.shape[1] != target_w or crop.shape[0] != target_h:
+                padded = np.zeros((target_h, target_w, 3), dtype=np.uint8)
+                ph = min(crop.shape[0], target_h)
+                pw = min(crop.shape[1], target_w)
+                padded[:ph, :pw] = crop[:ph, :pw]
+                crop = padded
 
-        if writer is None:
-            writer = create_video_writer(clip_path, "mp4v", fps, (target_w, target_h))
-        if writer.isOpened():
-            writer.write(crop)
+            if writer is None:
+                writer = create_video_writer(clip_path, "mp4v", fps, (target_w, target_h))
+            if writer.isOpened():
+                writer.write(crop)
 
-        if debug_keypoints and person_data is not None:
-            kpts = person_data["keypoints"]
-            detected = bool(person_data.get("detected", False))
-            if zone_export_info and zone_crop_rect:
-                zx1, zy1, zx2, zy2 = zone_crop_rect
-                debug_crop = frame_annotated[zy1:zy2, zx1:zx2]
-                if debug_crop.size == 0:
-                    continue
-                _draw_debug_overlay(debug_crop, last_known_bbox, kpts, zx1, zy1, f_idx, detected)
-                dw, dh = debug_crop.shape[1] // 2 * 2, debug_crop.shape[0] // 2 * 2
-                if debug_crop.shape[1] != dw or debug_crop.shape[0] != dh:
-                    debug_crop = cv2.resize(debug_crop, (dw, dh))
-            else:
-                debug_crop = crop.copy()
-                _draw_debug_overlay(debug_crop, last_known_bbox, kpts, cx1, cy1, f_idx, detected)
-            if debug_writer is None:
-                debug_path = clip_path.with_stem(clip_path.stem + "_debug")
-                debug_writer = create_video_writer(debug_path, "mp4v", fps, (debug_crop.shape[1], debug_crop.shape[0]))
-            if debug_writer.isOpened():
-                debug_writer.write(debug_crop)
-
-    if writer is not None:
-        writer.release()
-    if debug_writer is not None:
-        debug_writer.release()
-    cap.release()
+            if debug_keypoints and person_data is not None:
+                kpts = person_data["keypoints"]
+                detected = bool(person_data.get("detected", False))
+                if zone_export_info and zone_crop_rect:
+                    zx1, zy1, zx2, zy2 = zone_crop_rect
+                    debug_crop = frame_annotated[zy1:zy2, zx1:zx2]
+                    if debug_crop.size == 0:
+                        continue
+                    _draw_debug_overlay(debug_crop, last_known_bbox, kpts, zx1, zy1, f_idx, detected)
+                    dw, dh = debug_crop.shape[1] // 2 * 2, debug_crop.shape[0] // 2 * 2
+                    if debug_crop.shape[1] != dw or debug_crop.shape[0] != dh:
+                        debug_crop = cv2.resize(debug_crop, (dw, dh))
+                else:
+                    debug_crop = crop.copy()
+                    _draw_debug_overlay(debug_crop, last_known_bbox, kpts, cx1, cy1, f_idx, detected)
+                if debug_writer is None:
+                    debug_path = clip_path.with_stem(clip_path.stem + "_debug")
+                    debug_writer = create_video_writer(debug_path, "mp4v", fps, (debug_crop.shape[1], debug_crop.shape[0]))
+                if debug_writer.isOpened():
+                    debug_writer.write(debug_crop)
+    except Exception as e:
+        raise RuntimeError(f"Export error for event {event_id} at frame {f_idx}: {e}") from e
+    finally:
+        if writer is not None:
+            writer.release()
+        if debug_writer is not None:
+            debug_writer.release()
+        cap.release()
 
     return metadata_event

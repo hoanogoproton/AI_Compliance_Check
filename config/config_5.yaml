@@ -1,11 +1,11 @@
 crop:
 - 241
 - 190
-- 845
-- 890
+- 969
+- 889
 model:
   path: yolo11n-pose.pt
-  conf: 0.3
+  conf: 0.4
   iou: 0.2
 output:
   dir: ./outputs/RAI7-2
@@ -17,20 +17,31 @@ zones:
   Work:
     label: Work
     points:
-    - - 448.0
-      - 229.0
-    - - 452.0
-      - 117.0
-    - - 838.0
-      - 392.0
-    - - 830.0
-      - 832.0
-    - - 631.0
-      - 876.0
-    - - 290.0
-      - 516.0
-    - - 280.0
-      - 231.0
+    - - 277.0
+      - 339.0
+    - - 440.0
+      - 285.0
+    - - 447.0
+      - 51.0
+    - - 959.0
+      - 227.0
+    - - 889.0
+      - 828.0
+    - - 626.0
+      - 880.0
+    - - 260.0
+      - 530.0
+  JIG:
+    label: JIG
+    points:
+    - - 423.0
+      - 372.0
+    - - 340.0
+      - 402.0
+    - - 408.0
+      - 464.0
+    - - 476.0
+      - 421.0
 behaviors:
 - name: hand_to_head
   enabled: false
@@ -47,44 +58,48 @@ behaviors:
   params:
     zones:
     - Work
-    min_stay_frames: 60
-    leave_flash_frames: 20
+    min_stay_frames: 14
+    leave_flash_frames: 14
 - name: hand_in_zone
   enabled: false
   params:
     hand: any
-    min_duration_frames: 5
-    confirmation_frames: 20
-    max_gap_frames: 5
-    min_event_frames: 30
+    min_duration_frames: 1
+    confirmation_frames: 3
+    max_gap_frames: 1
+    min_event_frames: 3
 - name: head_turn
   enabled: true
   params:
     turn_threshold_ratio: 0.3
-    window_frames: 180
+    window_frames: 21
     max_turns: 2
-    confirmation_frames: 30
-    max_gap_frames: 10
-    min_event_frames: 30
+    confirmation_frames: 2
+    max_gap_frames: 1
+    min_event_frames: 3
 - name: hand_shake_object
-  enabled: false
+  enabled: true
   params:
-    window_frames: 40
+    zones:
+    - JIG
+    window_frames: 21
     min_reversals: 3
     min_displacement_ratio: 0.01
     keypoint_conf_threshold: 0.5
 - name: body_turn
-  enabled: false
+  enabled: true
   params:
     min_angle: 45.0
-    window_frames: 15
+    window_frames: 21
     velocity_threshold: 10.0
     confirmation_frames: 30
-    max_gap_frames: 10
-    min_event_frames: 60
+    max_gap_frames: 2
+    min_event_frames: 14
 - name: hand_snatch_object
-  enabled: false
+  enabled: true
   params:
+    zones:
+    - JIG
     min_grasp_frames: 3
     snatch_velocity_ratio: 0.15
     approach_window: 10
@@ -97,12 +112,12 @@ behaviors:
   enabled: true
   params:
     min_face_visible_frames: 3
-    min_face_hidden_frames: 5
+    min_face_hidden_frames: 3
     face_confidence_threshold: 0.3
     body_confidence_threshold: 0.3
     body_min_visible_keypoints: 2
-    window_frames: 180
-    max_turns: 1
-    confirmation_frames: 5
-    max_gap_frames: 10
-    min_event_frames: 30
+    window_frames: 42
+    max_turns: 2
+    confirmation_frames: 3
+    max_gap_frames: 3
+    min_event_frames: 5
