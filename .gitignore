@@ -25,6 +25,7 @@ plans/
 models/
 batch_results_*.csv
 debug_*.png
+debug_output/
 
 # Models (large binaries)
 *.pt
