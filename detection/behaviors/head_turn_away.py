@@ -5,13 +5,13 @@ from detection.behaviors.base import BaseBehavior, DetectionResult
 from detection.config import (
     HEAD_TURN_AWAY_MIN_FACE_VISIBLE_FRAMES,
     HEAD_TURN_AWAY_MIN_FACE_HIDDEN_FRAMES,
-    HEAD_TURN_AWAY_FACE_CONFIDENCE_THRESHOLD,
+    HEAD_TURN_AWAY_NOSE_CONFIDENCE_THRESHOLD,
     HEAD_TURN_AWAY_BODY_CONFIDENCE_THRESHOLD,
     HEAD_TURN_AWAY_BODY_MIN_VISIBLE_KEYPOINTS,
     HEAD_TURN_AWAY_WINDOW_FRAMES,
     HEAD_TURN_AWAY_MAX_TURNS,
 )
-from detection.pose_utils import face_visibility_score, is_body_trackable
+from detection.pose_utils import is_body_trackable
 
 
 @register_behavior("head_turn_away")
@@ -44,18 +44,18 @@ class HeadTurnAwayBehavior(BaseBehavior):
         max_turns = int(
             self.params.get("max_turns", HEAD_TURN_AWAY_MAX_TURNS)
         )
-
-        face_score = face_visibility_score(
-            person.keypoints,
-            min_conf=float(self.params.get("face_confidence_threshold", HEAD_TURN_AWAY_FACE_CONFIDENCE_THRESHOLD)),
+        nose_threshold = float(
+            self.params.get("nose_confidence_threshold", HEAD_TURN_AWAY_NOSE_CONFIDENCE_THRESHOLD)
         )
+
+        nose_conf = float(person.keypoints[0, 2])
         body_ok = is_body_trackable(
             person.keypoints,
             min_conf=float(self.params.get("body_confidence_threshold", HEAD_TURN_AWAY_BODY_CONFIDENCE_THRESHOLD)),
             min_visible=int(self.params.get("body_min_visible_keypoints", HEAD_TURN_AWAY_BODY_MIN_VISIBLE_KEYPOINTS)),
         )
 
-        face_seen = face_score >= 0.4
+        face_seen = nose_conf >= nose_threshold
         transition_event = None
 
         if state["face_state"] == "uncertain":
@@ -109,7 +109,7 @@ class HeadTurnAwayBehavior(BaseBehavior):
             metadata={
                 "event": transition_event,
                 "face_state": state["face_state"],
-                "face_score": face_score,
+                "nose_conf": nose_conf,
                 "body_trackable": body_ok,
                 "face_visible_frames": state["face_visible_count"],
                 "face_hidden_frames": state["face_hidden_count"],

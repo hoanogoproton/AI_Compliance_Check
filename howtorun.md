@@ -45,4 +45,4 @@ pytest tests/ -v
 ```
 python -m gui.app
 python debug_tracks.py --video "videos/1.mp4" --config config/config.yaml
-python cut_video.py videos/RAI7-1.mp4 10.5 30.2
+python cut_video.py "D:\Video\CA170-FB-PC-No5-20260824-114244.mp4" 0 180

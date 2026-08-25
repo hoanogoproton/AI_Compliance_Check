@@ -97,6 +97,14 @@ def angular_difference_deg(a: float, b: float) -> float:
     return min(diff, 180.0 - diff)
 
 
+def ear_dominance_ratio(kpts: np.ndarray, min_conf: float = 0.1) -> float | None:
+    le_x, le_y, le_c = get_keypoint(kpts, 3)
+    re_x, re_y, re_c = get_keypoint(kpts, 4)
+    if le_c < min_conf and re_c < min_conf:
+        return None
+    return le_c / (le_c + re_c + 1e-6)
+
+
 def face_visibility_score(
     kpts: np.ndarray,
     min_conf: float = KEYPOINT_CONFIDENCE_THRESHOLD,

@@ -1,71 +1,40 @@
 crop:
-- 241
-- 190
-- 845
-- 890
+- 26
+- 8
+- 1858
+- 1060
 model:
   path: yolo26n-pose.pt
   conf: 0.4
   iou: 0.2
 output:
-  dir: ./outputs/RAI7-1
+  dir: ./outputs/PC1
   visualize: true
   context_seconds: 5
   crop_padding: 10
   debug_keypoints: true
 zones:
-  PHC:
-    label: PHC
+  Work:
+    label: Work
     points:
-    - - 186.0
-      - 287.0
-    - - 222.0
-      - 399.0
-    - - 283.0
-      - 413.0
-    - - 314.0
-      - 348.0
-    - - 220.0
-      - 258.0
-  PHC_2:
-    label: PHC_2
-    points:
-    - - 310.0
-      - 169.0
-    - - 323.0
-      - 219.0
-    - - 376.0
-      - 243.0
-    - - 399.0
-      - 215.0
-    - - 328.0
-      - 145.0
-  PHC_3:
-    label: PHC_3
-    points:
-    - - 381.0
-      - 84.0
-    - - 389.0
-      - 122.0
-    - - 433.0
-      - 152.0
-    - - 462.0
-      - 113.0
-    - - 400.0
-      - 64.0
-  Leave:
-    label: Leave
-    points:
-    - - 250.0
-      - 598.0
-    - - 512.0
-      - 0
-    - - 660.0
-      - 1.0
-    - - 781.0
-      - 806.0
-    - - 608.0
-      - 870.0
+    - - 235.0
+      - 260.0
+    - - 255.0
+      - 461.0
+    - - 397.0
+      - 1037.0
+    - - 1702.0
+      - 1044.0
+    - - 1840.0
+      - 829.0
+    - - 1837.0
+      - 428.0
+    - - 1780.0
+      - 197.0
+    - - 962.0
+      - 90.0
+    - - 240.0
+      - 97.0
 behaviors:
 - name: hand_to_head
   enabled: false
@@ -81,23 +50,19 @@ behaviors:
   enabled: true
   params:
     zones:
-    - Leave
+    - Work
     min_stay_frames: 14
     leave_flash_frames: 14
 - name: hand_in_zone
-  enabled: true
+  enabled: false
   params:
-    zones:
-    - PHC
-    - PHC_2
-    - PHC_3
     hand: any
     min_duration_frames: 1
     confirmation_frames: 3
     max_gap_frames: 1
     min_event_frames: 3
 - name: head_turn
-  enabled: true
+  enabled: false
   params:
     turn_threshold_ratio: 0.3
     window_frames: 21
@@ -113,7 +78,7 @@ behaviors:
     min_displacement_ratio: 0.01
     keypoint_conf_threshold: 0.3
 - name: body_turn
-  enabled: true
+  enabled: false
   params:
     min_angle: 45.0
     window_frames: 21
@@ -133,11 +98,11 @@ behaviors:
     max_gap_frames: 1
     min_event_frames: 3
 - name: head_turn_away
-  enabled: true
+  enabled: false
   params:
     min_face_visible_frames: 2
     min_face_hidden_frames: 2
-    nose_confidence_threshold: 0.2
+    face_confidence_threshold: 0.4
     body_confidence_threshold: 0.3
     body_min_visible_keypoints: 2
     window_frames: 42
