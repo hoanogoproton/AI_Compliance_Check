@@ -1,0 +1,12 @@
+sample_id,video_id,camera_id,recording_session,annotator_id,annotation_status,track_id,start_frame,end_frame,label,behavior,pose_model_version,tracker_config_hash,quality_score,duration_sec,fps
+0,RAI7-2 CUT_95868051,unknown,default,default,valid,1,28,45,1,move_1_step,yolo26n-pose,bytetrack,1,2.569201958,7.00606659
+1,RAI7-2 CUT_95868051,unknown,default,default,valid,1,69,78,1,move_1_step,yolo26n-pose,bytetrack,1,1.427334421,7.00606659
+2,RAI7-2 CUT_95868051,unknown,default,default,valid,1,107,115,1,move_1_step,yolo26n-pose,bytetrack,1,1.284600979,7.00606659
+3,RAI7-2 CUT_95868051,unknown,default,default,valid,1,118,127,1,move_1_step,yolo26n-pose,bytetrack,1,1.427334421,7.00606659
+4,RAI7-2 CUT_95868051,unknown,default,default,valid,1,181,191,1,move_1_step,yolo26n-pose,bytetrack,1,1.570067863,7.00606659
+5,RAI7-2 CUT_95868051,unknown,default,default,valid,1,193,202,1,move_1_step,yolo26n-pose,bytetrack,1,1.427334421,7.00606659
+8,RAI7-2 CUT_95868051,unknown,default,default,valid,68,460,471,1,move_1_step,yolo26n-pose,bytetrack,1,1.712801305,7.00606659
+9,RAI7-2 CUT_95868051,unknown,default,default,valid,68,517,528,1,move_1_step,yolo26n-pose,bytetrack,1,1.712801305,7.00606659
+10,RAI7-2 CUT_95868051,unknown,default,default,valid,68,573,582,1,move_1_step,yolo26n-pose,bytetrack,1,1.427334421,7.00606659
+11,RAI7-2 CUT_95868051,unknown,default,default,valid,2,128,140,1,move_1_step,yolo26n-pose,bytetrack,1,1.855534747,7.00606659
+12,RAI7-2 CUT_95868051,unknown,default,default,valid,2,471,486,1,move_1_step,yolo26n-pose,bytetrack,1,2.283735074,7.00606659

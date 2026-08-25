@@ -1,3 +1,5 @@
+import json
+import pickle
 import queue
 import threading
 import traceback
@@ -12,6 +14,7 @@ from detection.behavior_detector import get_registry
 from detection.behaviors.base import BaseBehavior
 # Trigger registration of all behaviors
 import detection.behaviors  # noqa: F401
+from detection.config import CLASSIFIER_DEFAULT_THRESHOLD, CLASSIFIER_MIN_SEQUENCE_FRAMES
 from detection.config_loader import load_config
 from detection.detector import process_frame
 from detection.event_manager import Event, StatefulEventManager
@@ -20,6 +23,7 @@ from detection.model import load_pose_model
 from detection.video_utils import create_video_writer
 from detection.visualizer import draw_skeleton, draw_zone
 from detection.zones.zone_checker import load_zones
+from features import extract_features
 
 MAX_CACHED_FRAMES = 100000
 
@@ -53,6 +57,148 @@ def _build_behaviors(config: dict) -> list[BaseBehavior]:
     return behaviors
 
 
+def _load_classifier_models(config: dict) -> dict:
+    """Load one-vs-rest classifier models from config["classifier"]["behaviors"].
+
+    Returns behavior_name -> {"model", "scaler", "threshold", "metadata",
+    "mode", "target_len", "min_sequence_frames"}. Behaviors whose model files
+    are missing are skipped (with a console warning), so a config can be used
+    before any model has been trained.
+    """
+    classifier_cfg = config.get("classifier") or {}
+    behaviors_cfg = classifier_cfg.get("behaviors") or {}
+    models: dict[str, dict] = {}
+    for behavior_name, bcfg in behaviors_cfg.items():
+        model_path = bcfg.get("model_path")
+        scaler_path = bcfg.get("scaler_path")
+        metadata_path = bcfg.get("metadata_path")
+        if not model_path or not Path(model_path).exists():
+            print(f"[Classifier] Skipping '{behavior_name}': model not found at {model_path}", flush=True)
+            continue
+        if not scaler_path or not Path(scaler_path).exists():
+            print(f"[Classifier] Skipping '{behavior_name}': scaler not found at {scaler_path}", flush=True)
+            continue
+        metadata = {}
+        if metadata_path and Path(metadata_path).exists():
+            with open(metadata_path, "r") as f:
+                metadata = json.load(f)
+        with open(model_path, "rb") as f:
+            model = pickle.load(f)
+        with open(scaler_path, "rb") as f:
+            scaler = pickle.load(f)
+        threshold = float(bcfg.get("threshold", metadata.get("threshold", CLASSIFIER_DEFAULT_THRESHOLD)))
+        models[behavior_name] = {
+            "model": model,
+            "scaler": scaler,
+            "threshold": threshold,
+            "metadata": metadata,
+            "mode": metadata.get("mode", "temporal"),
+            "target_len": int(metadata.get("target_len", 32)),
+            "min_sequence_frames": int(metadata.get("min_sequence_frames", CLASSIFIER_MIN_SEQUENCE_FRAMES)),
+        }
+        print(
+            f"[Classifier] Loaded '{behavior_name}' (threshold={threshold:.3f}, "
+            f"mode={models[behavior_name]['mode']}, dim={metadata.get('feature_dim', '?')})",
+            flush=True,
+        )
+    return models
+
+
+def _build_event_sequence(
+    ev: Event, frame_data_cache: dict, fps: float
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
+    """Build (keypoints_seq, bboxes_seq, timestamps, valid_mask) for an event.
+
+    Uses the contiguous frame range [start_frame, end_frame]. Frames whose
+    track data is missing from the cache are emitted as zeros with
+    valid_mask=False so the feature extractor can rely on the mask.
+    """
+    if ev.end_frame < ev.start_frame or fps <= 0:
+        return None
+    frames = list(range(ev.start_frame, ev.end_frame + 1))
+    T = len(frames)
+    keypoints_seq = np.zeros((T, 17, 3), dtype=np.float32)
+    bboxes_seq = np.zeros((T, 4), dtype=np.float32)
+    timestamps = np.zeros(T, dtype=np.float32)
+    valid_mask = np.zeros(T, dtype=bool)
+    for i, f in enumerate(frames):
+        timestamps[i] = f / fps
+        person_data = frame_data_cache.get(f, {}).get(ev.track_id)
+        if person_data is None:
+            continue
+        kp = person_data.get("keypoints")
+        if kp is None:
+            continue
+        keypoints_seq[i] = np.asarray(kp, dtype=np.float32)
+        bboxes_seq[i] = np.asarray(person_data.get("bbox", (0, 0, 0, 0)), dtype=np.float32)
+        valid_mask[i] = True
+    return keypoints_seq, bboxes_seq, timestamps, valid_mask
+
+
+def _predict_proba(model, X: np.ndarray) -> float:
+    """Return P(positive class). Falls back to decision_function sigmoid."""
+    if hasattr(model, "predict_proba"):
+        proba = model.predict_proba(X)
+        if proba.ndim == 2 and proba.shape[1] >= 2:
+            return float(proba[0, 1])
+        return float(proba[0, -1])
+    if hasattr(model, "decision_function"):
+        d = float(model.decision_function(X)[0])
+        return 1.0 / (1.0 + float(np.exp(-d)))
+    return float(model.predict(X)[0])
+
+
+def _apply_classifier_filter(
+    all_new_events: list[Event],
+    classifier_models: dict,
+    frame_data_cache: dict,
+    fps: float,
+) -> list[Event]:
+    """Phase 1.5: per-behavior classifier filter (one model per behavior)."""
+    if not classifier_models or not all_new_events:
+        return all_new_events
+    filtered: list[Event] = []
+    for ev in all_new_events:
+        cm = classifier_models.get(ev.behavior_name)
+        if cm is None:
+            filtered.append(ev)
+            continue
+        seq = _build_event_sequence(ev, frame_data_cache, fps)
+        if seq is None:
+            filtered.append(ev)
+            continue
+        keypoints_seq, bboxes_seq, timestamps, valid_mask = seq
+        if len(keypoints_seq) < cm["min_sequence_frames"]:
+            filtered.append(ev)
+            continue
+        try:
+            features = extract_features(
+                keypoints_seq,
+                bboxes_seq,
+                timestamps,
+                valid_mask,
+                target_len=cm["target_len"],
+                mode=cm["mode"],
+            )
+        except Exception as e:  # noqa: BLE001
+            print(f"[Classifier] feature error ({ev.behavior_name} track {ev.track_id}): {e}", flush=True)
+            filtered.append(ev)
+            continue
+        features_scaled = cm["scaler"].transform([features])
+        prob = _predict_proba(cm["model"], features_scaled)
+        if prob >= cm["threshold"]:
+            ev.max_confidence = float(prob)
+            ev.metadata["classifier_confidence"] = float(prob)
+            ev.metadata["classifier_threshold"] = float(cm["threshold"])
+            ev.metadata["classifier_mode"] = cm["mode"]
+            filtered.append(ev)
+        else:
+            ev.metadata["classifier_confidence"] = float(prob)
+            ev.metadata["classifier_threshold"] = float(cm["threshold"])
+            ev.metadata["classifier_dropped"] = True
+    return filtered
+
+
 def _reader_worker(cap, read_queue, total_frames, crop_region):
     for frame_idx in range(total_frames):
         try:
@@ -77,7 +223,8 @@ def _reader_worker(cap, read_queue, total_frames, crop_region):
 
 
 def _inference_worker(
-    model, read_queue, write_queue, behaviors, frame_data_cache, conf, iou, fps
+    model, read_queue, write_queue, behaviors, frame_data_cache, conf, iou, fps,
+    classifier_models,
 ):
     while True:
         item = read_queue.get()
@@ -105,6 +252,11 @@ def _inference_worker(
             for ev in new_events:
                 ev.behavior_name = behavior.name
             all_new_events.extend(new_events)
+
+        # Phase 1.5: Per-behavior classifier filter (one model per behavior).
+        all_new_events = _apply_classifier_filter(
+            all_new_events, classifier_models, frame_data_cache, fps
+        )
 
         # Phase 2: Build per-person frame_data for visualization / debugging.
         for person in people:
@@ -191,6 +343,7 @@ def run_pipeline(
             if hasattr(b, 'zones') and b.zones:
                 for z in b.zones:
                     zones_export.append({"zone": z, "behavior_name": b.name})
+        classifier_models = _load_classifier_models(config)
     else:
         from detection.behaviors.hand_to_head import HandToHeadBehavior
         from detection.config import (
@@ -208,6 +361,7 @@ def run_pipeline(
         })
         behaviors = [behavior]
         zones_export = []
+        classifier_models = {}
 
     model = load_pose_model(model_path)
 
@@ -259,7 +413,8 @@ def run_pipeline(
     )
     inference = threading.Thread(
         target=_inference_worker,
-        args=(model, read_queue, write_queue, behaviors, frame_data_cache, conf, iou, fps),
+        args=(model, read_queue, write_queue, behaviors, frame_data_cache, conf, iou, fps,
+              classifier_models),
         daemon=True,
     )
 

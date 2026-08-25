@@ -36,3 +36,34 @@ def _validate_config(config: dict):
             raise ValueError(f"Each behavior must have a 'name' field, got: {bcfg}")
         if not isinstance(bcfg.get("enabled", True), bool):
             raise ValueError(f"Behavior '{bcfg['name']}': 'enabled' must be bool")
+    _validate_classifier(config.get("classifier"))
+
+
+def _validate_classifier(classifier: dict | None):
+    """Validate the optional `classifier.behaviors` section.
+
+    Structure only is validated here (keys + types). Missing model files are
+    tolerated so configs can be loaded before any model has been trained; the
+    pipeline skips a behavior whose model files are absent.
+    """
+    if classifier is None:
+        return
+    if not isinstance(classifier, dict):
+        raise ValueError("'classifier' must be a mapping")
+    behaviors = classifier.get("behaviors")
+    if behaviors is None:
+        return
+    if not isinstance(behaviors, dict):
+        raise ValueError("'classifier.behaviors' must be a mapping of behavior_name -> config")
+    for bname, bcfg in behaviors.items():
+        if not isinstance(bcfg, dict):
+            raise ValueError(f"classifier.behaviors.{bname} must be a mapping")
+        for key in ("model_path", "scaler_path", "metadata_path"):
+            val = bcfg.get(key)
+            if val is not None and not isinstance(val, str):
+                raise ValueError(f"classifier.behaviors.{bname}.{key} must be a string path")
+        threshold = bcfg.get("threshold")
+        if threshold is not None and not isinstance(threshold, (int, float)):
+            raise ValueError(f"classifier.behaviors.{bname}.threshold must be a number")
+        if threshold is not None and not (0.0 <= float(threshold) <= 1.0):
+            raise ValueError(f"classifier.behaviors.{bname}.threshold must be in [0, 1]")
