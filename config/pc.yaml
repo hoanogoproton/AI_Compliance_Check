@@ -100,13 +100,12 @@ behaviors:
 - name: head_turn_away
   enabled: false
   params:
-    min_face_visible_frames: 2
-    min_face_hidden_frames: 2
-    face_confidence_threshold: 0.4
+    min_toward_frames: 2
+    min_away_frames: 2
+    face_keypoint_confidence_threshold: 0.4
     body_confidence_threshold: 0.3
     body_min_visible_keypoints: 2
     window_frames: 42
     max_turns: 1
-    confirmation_frames: 2
-    max_gap_frames: 3
-    min_event_frames: 2
+    min_face_keypoints_toward: 3
+    max_face_keypoints_away: 1

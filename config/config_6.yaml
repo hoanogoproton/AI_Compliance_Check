@@ -1,14 +1,14 @@
 crop:
-- 241
-- 190
-- 969
-- 889
+- 667
+- 8
+- 1105
+- 1053
 model:
   path: yolo11n-pose.pt
   conf: 0.4
   iou: 0.2
 output:
-  dir: ./outputs/RAI7-2
+  dir: ./outputs/CA857-FB-RAI3-No1-20260821-133623
   visualize: true
   context_seconds: 2
   crop_padding: 10
@@ -17,31 +17,51 @@ zones:
   Work:
     label: Work
     points:
-    - - 277.0
-      - 339.0
-    - - 440.0
-      - 285.0
-    - - 447.0
-      - 51.0
-    - - 959.0
-      - 227.0
-    - - 889.0
-      - 828.0
-    - - 626.0
-      - 880.0
-    - - 260.0
-      - 530.0
-  JIG:
-    label: JIG
-    points:
-    - - 402.0
-      - 379.0
-    - - 319.0
-      - 415.0
     - - 411.0
-      - 499.0
-    - - 492.0
-      - 452.0
+      - 1.0
+    - - 431.0
+      - 1035.0
+    - - 972.0
+      - 1052
+    - - 1038.0
+      - 502.0
+    - - 603.0
+      - 0
+  PHC:
+    label: PHC
+    points:
+    - - 755.0
+      - 398.0
+    - - 740.0
+      - 507.0
+    - - 777.0
+      - 518.0
+    - - 809.0
+      - 414.0
+  PHC1:
+    label: PHC1
+    points:
+    - - 688.0
+      - 247.0
+    - - 672.0
+      - 322.0
+    - - 707.0
+      - 338.0
+    - - 748.0
+      - 268.0
+  PHC2:
+    label: PHC2
+    points:
+    - - 611.0
+      - 138.0
+    - - 605.0
+      - 221.0
+    - - 637.0
+      - 237.0
+    - - 669.0
+      - 205.0
+    - - 678.0
+      - 172.0
 behaviors:
 - name: hand_to_head
   enabled: false
@@ -58,11 +78,15 @@ behaviors:
   params:
     zones:
     - Work
-    min_stay_frames: 14
-    leave_flash_frames: 14
+    min_stay_frames: 35
+    leave_flash_frames: 28
 - name: hand_in_zone
-  enabled: false
+  enabled: true
   params:
+    zones:
+    - PHC
+    - PHC1
+    - PHC2
     hand: any
     min_duration_frames: 1
     confirmation_frames: 3
@@ -80,10 +104,8 @@ behaviors:
 - name: hand_shake_object
   enabled: false
   params:
-    zones:
-    - JIG
-    window_frames: 21
-    min_reversals: 1
+    window_frames: 28
+    min_reversals: 3
     min_displacement_ratio: 0.01
     keypoint_conf_threshold: 0.3
 - name: body_turn
@@ -102,16 +124,14 @@ behaviors:
 - name: hand_snatch_object
   enabled: false
   params:
-    zones:
-    - JIG
-    min_grasp_frames: 1
+    min_grasp_frames: 3
     snatch_velocity_ratio: 0.1
-    approach_window: 14
-    velocity_baseline_ratio: 1.5
+    approach_window: 10
+    velocity_baseline_ratio: 2.0
     keypoint_conf_threshold: 0.3
-    confirmation_frames: 1
+    confirmation_frames: 3
     max_gap_frames: 1
-    min_event_frames: 1
+    min_event_frames: 3
 - name: head_turn_away
   enabled: true
   params:

@@ -61,6 +61,14 @@ class StatefulEventManager:
                     ts.hand_sides = [side]
                     ts.max_conf = conf
                     ts.gap_count = 0
+                    # Khi confirmation_frames == 1, một frame detected đã đủ
+                    # để xác nhận. Nếu không check ở đây, state machine sẽ yêu
+                    # cầu thêm ít nhất một frame detected thứ hai (trong nhánh
+                    # CONFIRMING) mới chuyển ACTIVE, khiến mọi detection dài
+                    # đúng 1 frame (phổ biến với head_turn_away) bị drop.
+                    if ts.confirm_count >= self.confirmation_frames:
+                        ts.state = "ACTIVE"
+                        ts.gap_count = 0
 
             elif ts.state == "CONFIRMING":
                 if is_detected:

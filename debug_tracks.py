@@ -23,9 +23,9 @@ def main():
         print(f"Error: video not found: {video_path}")
         return 1
 
-    model_path = "yolo11n-pose.pt"
-    conf = 0.3
-    iou = 0.5
+    model_path = "yolo26n-pose.pt"
+    conf = 0.4
+    iou = 0.2
     crop_region = None
 
     if args.config:

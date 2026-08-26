@@ -9,7 +9,7 @@ model:
   iou: 0.2
 output:
   dir: ./outputs/CA927-FB-RAI7-No3-20260822-093621_P2
-  visualize: false
+  visualize: true
   context_seconds: 2
   crop_padding: 10
   debug_keypoints: true
@@ -113,14 +113,18 @@ behaviors:
     min_displacement_ratio: 0.01
     keypoint_conf_threshold: 0.3
 - name: body_turn
-  enabled: false
+  enabled: true
   params:
-    min_angle: 45.0
-    window_frames: 21
-    velocity_threshold: 10.0
-    confirmation_frames: 30
+    min_angle: 30.0
+    window_seconds: 2.0
+    velocity_threshold_deg_s: 30.0
+    smoothing_frames: 2
+    track_gap_frames: 2
+    cooldown_frames: 2
+    stale_frames: 70
+    confirmation_frames: 2
     max_gap_frames: 2
-    min_event_frames: 14
+    min_event_frames: 7
 - name: hand_snatch_object
   enabled: false
   params:
@@ -135,20 +139,22 @@ behaviors:
 - name: head_turn_away
   enabled: true
   params:
-    min_face_visible_frames: 4
-    min_face_hidden_frames: 3
-    face_confidence_threshold: 0.3
-    body_confidence_threshold: 0.3
+    min_toward_frames: 3
+    min_away_frames: 3
+    face_keypoint_confidence_threshold: 0.4
+    min_face_keypoints_toward: 4
+    max_face_keypoints_away: 2
+    body_confidence_threshold: 0.4
     body_min_visible_keypoints: 3
-    window_frames: 28
+    window_frames: 21
     max_turns: 1
-    confirmation_frames: 2
-    max_gap_frames: 3
-    min_event_frames: 2
+    confirmation_frames: 1
+    max_gap_frames: 1
+    min_event_frames: 1
 - name: head_shake
   enabled: false
   params:
-    window_frames: 35
+    window_frames: 21
     min_reversals: 4
     yaw_amplitude_threshold: 8.0
     min_face_confidence: 0.5
