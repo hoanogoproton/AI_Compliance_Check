@@ -42,6 +42,37 @@ def draw_skeleton(
     return frame
 
 
+def draw_face_landmarks(
+    frame: np.ndarray,
+    face_data,
+    bbox: tuple[float, float, float, float],
+    frame_shape: tuple[int, int],
+) -> np.ndarray:
+    if face_data is None or face_data.landmarks is None:
+        return frame
+    x1, y1, x2, y2 = bbox
+    h_frame, w_frame = frame_shape
+    head_ratio, expand_ratio = 0.3, 0.2
+    roi_h = (y2 - y1) * head_ratio
+    roi_y1 = y1
+    roi_y2 = y1 + roi_h
+    expand_x = (x2 - x1) * expand_ratio
+    expand_y = roi_h * expand_ratio
+    roi_x1 = max(0, int(x1 - expand_x))
+    roi_y1 = max(0, int(roi_y1 - expand_y))
+    roi_x2 = min(w_frame, int(x2 + expand_x))
+    roi_y2 = min(h_frame, int(roi_y2 + expand_y))
+    roi_w = roi_x2 - roi_x1
+    roi_h = roi_y2 - roi_y1
+    if roi_w < 1 or roi_h < 1:
+        return frame
+    for lm in face_data.landmarks:
+        lx = int(lm.x * roi_w + roi_x1)
+        ly = int(lm.y * roi_h + roi_y1)
+        cv2.circle(frame, (lx, ly), 1, (0, 255, 0), -1)
+    return frame
+
+
 def draw_zone(frame: np.ndarray, zone, active: bool | str) -> np.ndarray:
     if len(zone.points) < 3:
         return frame

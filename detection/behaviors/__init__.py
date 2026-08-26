@@ -6,3 +6,4 @@ from detection.behaviors.head_turn_away import HeadTurnAwayBehavior
 from detection.behaviors.hand_shake_object import HandShakeObjectBehavior
 from detection.behaviors.body_turn import BodyTurnBehavior
 from detection.behaviors.hand_snatch_object import HandSnatchObjectBehavior
+from detection.behaviors.head_shake import HeadShakeBehavior

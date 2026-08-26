@@ -405,7 +405,8 @@ def export_single_event(
             if fixed_crop_size is None:
                 cw = int(sbw + 2 * crop_pad)
                 ch = int(sbh + 2 * crop_pad)
-                fixed_crop_size = (cw, ch)
+                side = max(cw, ch)
+                fixed_crop_size = (side, side)
             target_w, target_h = fixed_crop_size
 
             half_w = target_w // 2
@@ -415,12 +416,29 @@ def export_single_event(
             cx2 = cx1 + target_w
             cy2 = cy1 + target_h
 
+            # shift crop window inward instead of clamping + padding black
+            if cx1 < 0:
+                shift = -cx1
+                cx1 += shift
+                cx2 += shift
+            if cy1 < 0:
+                shift = -cy1
+                cy1 += shift
+                cy2 += shift
+            if cx2 > frame_w:
+                shift = cx2 - frame_w
+                cx1 -= shift
+                cx2 -= shift
+            if cy2 > frame_h:
+                shift = cy2 - frame_h
+                cy1 -= shift
+                cy2 -= shift
             cx1 = max(0, cx1)
             cy1 = max(0, cy1)
             cx2 = min(frame_w, cx2)
             cy2 = min(frame_h, cy2)
 
-            crop = frame_annotated[cy1:cy2, cx1:cx2]
+            crop = frame[cy1:cy2, cx1:cx2]
             if crop.size == 0:
                 continue
 

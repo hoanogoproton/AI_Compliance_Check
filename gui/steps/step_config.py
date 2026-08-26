@@ -83,6 +83,16 @@ BEHAVIOR_PARAMS = {
         ("max_gap_frames", int, 0, 300, 10),
         ("min_event_frames", int, 1, 300, 15),
     ],
+    "head_shake": [
+        ("window_frames", int, 1, 300, 35),
+        ("min_reversals", int, 1, 30, 4),
+        ("yaw_amplitude_threshold", float, 1.0, 90.0, 8.0),
+        ("min_face_confidence", float, 0.0, 1.0, 0.5),
+        ("max_reprojection_error", float, 0.1, 50.0, 10.0),
+        ("confirmation_frames", int, 1, 300, 3),
+        ("max_gap_frames", int, 0, 300, 5),
+        ("min_event_frames", int, 1, 300, 5),
+    ],
 }
 
 
@@ -358,6 +368,21 @@ class StepConfig(QWidget):
         output_group.setLayout(output_form)
         self._layout.addWidget(output_group)
 
+        self.face_group = QGroupBox("Face Detection (Head Pose)")
+        face_form = QFormLayout()
+        self.face_conf_spin = QDoubleSpinBox()
+        self.face_conf_spin.setRange(0.0, 1.0)
+        self.face_conf_spin.setSingleStep(0.05)
+        self.face_conf_spin.setValue(0.5)
+        face_form.addRow("Min detection confidence:", self.face_conf_spin)
+        self.face_reproj_spin = QDoubleSpinBox()
+        self.face_reproj_spin.setRange(0.1, 50.0)
+        self.face_reproj_spin.setSingleStep(0.5)
+        self.face_reproj_spin.setValue(10.0)
+        face_form.addRow("Max reprojection error:", self.face_reproj_spin)
+        self.face_group.setLayout(face_form)
+        self._layout.addWidget(self.face_group)
+
         self.zone_list = QListWidget()
         self.zone_group = QGroupBox("Zones (read-only)")
         zone_layout = QVBoxLayout()
@@ -422,6 +447,14 @@ class StepConfig(QWidget):
         self.crop_spin.setValue(int(out_cfg.get("crop_padding", 20)))
         self.debug_kp_cb.setChecked(bool(out_cfg.get("debug_keypoints", False)))
 
+        face_cfg = config.get("face_detection", {})
+        self.face_conf_spin.setValue(float(face_cfg.get("min_detection_confidence", 0.5)))
+        self.face_reproj_spin.setValue(float(face_cfg.get("max_reprojection_error", 10.0)))
+        self.face_group.setVisible(
+            any(b.get("name") == "head_shake" and b.get("enabled", True)
+                for b in config.get("behaviors", []))
+        )
+
         self.zone_list.clear()
         zones = config.get("zones", {})
         for zname, zdata in zones.items():
@@ -465,6 +498,7 @@ class StepConfig(QWidget):
             cfg = {
                 "model": {"path": "yolo11n-pose.pt", "conf": 0.3, "iou": 0.5},
                 "output": {"dir": "./outputs", "visualize": True, "context_seconds": 5, "crop_padding": 20, "debug_keypoints": False},
+                "face_detection": {"min_detection_confidence": 0.5, "max_reprojection_error": 10.0},
                 "zones": {},
                 "behaviors": [
                     {
@@ -508,6 +542,10 @@ class StepConfig(QWidget):
             },
             "zones": (self.main_window.config_data or {}).get("zones", {}),
             "behaviors": behaviors,
+            "face_detection": {
+                "min_detection_confidence": self.face_conf_spin.value(),
+                "max_reprojection_error": self.face_reproj_spin.value(),
+            },
         }
 
         config_path = self.main_window.config_path

@@ -21,7 +21,7 @@ from detection.event_manager import Event, StatefulEventManager
 from detection.exporter import export_single_event, write_metadata_files
 from detection.model import load_pose_model
 from detection.video_utils import create_video_writer
-from detection.visualizer import draw_skeleton, draw_zone
+from detection.visualizer import draw_skeleton, draw_zone, draw_face_landmarks
 from detection.zones.zone_checker import load_zones
 from features import extract_features
 
@@ -224,7 +224,7 @@ def _reader_worker(cap, read_queue, total_frames, crop_region):
 
 def _inference_worker(
     model, read_queue, write_queue, behaviors, frame_data_cache, conf, iou, fps,
-    classifier_models,
+    classifier_models, face_pipeline,
 ):
     while True:
         item = read_queue.get()
@@ -244,6 +244,12 @@ def _inference_worker(
             continue
         all_new_events = []
         frame_data = {}
+
+        # Face pipeline: enrich people with face data before behavior processing
+        if face_pipeline is not None:
+            face_map = face_pipeline.run(frame, people)
+            for person in people:
+                person.face_data = face_map.get(person.track_id)
 
         # Phase 1: Process each behavior ONCE with ALL people,
         # so the state machine sees all track detections atomically per frame.
@@ -362,6 +368,19 @@ def run_pipeline(
         behaviors = [behavior]
         zones_export = []
         classifier_models = {}
+    face_pipeline = None
+    if config_path:
+        face_cfg = config.get("face_detection", {})
+        has_head_shake = any(
+            b.get("name") == "head_shake" and b.get("enabled", True)
+            for b in config.get("behaviors", [])
+        )
+        if has_head_shake:
+            from detection.face_utils import FacePipeline
+            face_pipeline = FacePipeline(
+                min_detection_confidence=face_cfg.get("min_detection_confidence", 0.5),
+                max_reprojection_error=face_cfg.get("max_reprojection_error", 10.0),
+            )
 
     model = load_pose_model(model_path)
 
@@ -414,7 +433,7 @@ def run_pipeline(
     inference = threading.Thread(
         target=_inference_worker,
         args=(model, read_queue, write_queue, behaviors, frame_data_cache, conf, iou, fps,
-              classifier_models),
+              classifier_models, face_pipeline),
         daemon=True,
     )
 
@@ -493,6 +512,9 @@ def run_pipeline(
                         frame = draw_skeleton(
                             frame, person.keypoints, person.bbox, person.track_id,
                             bool(active_behavior_name), active_behavior_name,
+                        )
+                        frame = draw_face_landmarks(
+                            frame, person.face_data, person.bbox, frame.shape[:2],
                         )
                     for behavior in behaviors:
                         if hasattr(behavior, 'zones') and behavior.zones:

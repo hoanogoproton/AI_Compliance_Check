@@ -8,9 +8,9 @@ model:
   conf: 0.4
   iou: 0.2
 output:
-  dir: ./outputs/RAI7-1
-  visualize: true
-  context_seconds: 5
+  dir: ./outputs/CA927-FB-RAI7-No3-20260822-093621_P2
+  visualize: false
+  context_seconds: 2
   crop_padding: 10
   debug_keypoints: true
 zones:
@@ -78,14 +78,14 @@ behaviors:
     max_gap_frames: 10
     min_event_frames: 30
 - name: leave_zone
-  enabled: true
+  enabled: false
   params:
     zones:
     - Leave
     min_stay_frames: 14
     leave_flash_frames: 14
 - name: hand_in_zone
-  enabled: true
+  enabled: false
   params:
     zones:
     - PHC
@@ -97,7 +97,7 @@ behaviors:
     max_gap_frames: 1
     min_event_frames: 3
 - name: head_turn
-  enabled: true
+  enabled: false
   params:
     turn_threshold_ratio: 0.3
     window_frames: 21
@@ -113,7 +113,7 @@ behaviors:
     min_displacement_ratio: 0.01
     keypoint_conf_threshold: 0.3
 - name: body_turn
-  enabled: true
+  enabled: false
   params:
     min_angle: 45.0
     window_frames: 21
@@ -135,13 +135,27 @@ behaviors:
 - name: head_turn_away
   enabled: true
   params:
-    min_face_visible_frames: 7
-    min_face_hidden_frames: 7
-    nose_confidence_threshold: 0.4
-    body_confidence_threshold: 0.4
-    body_min_visible_keypoints: 4
+    min_face_visible_frames: 4
+    min_face_hidden_frames: 3
+    face_confidence_threshold: 0.3
+    body_confidence_threshold: 0.3
+    body_min_visible_keypoints: 3
     window_frames: 28
     max_turns: 1
     confirmation_frames: 2
     max_gap_frames: 3
     min_event_frames: 2
+- name: head_shake
+  enabled: false
+  params:
+    window_frames: 35
+    min_reversals: 4
+    yaw_amplitude_threshold: 8.0
+    min_face_confidence: 0.5
+    max_reprojection_error: 10.0
+    confirmation_frames: 3
+    max_gap_frames: 5
+    min_event_frames: 5
+face_detection:
+  min_detection_confidence: 0.5
+  max_reprojection_error: 10.0

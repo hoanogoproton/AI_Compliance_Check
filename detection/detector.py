@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 from dataclasses import dataclass
 
@@ -8,6 +10,7 @@ class TrackedPerson:
     bbox: tuple[float, float, float, float]
     keypoints: np.ndarray
     conf: float
+    face_data: Any | None = None
 
 
 def process_frame(model, frame, conf=0.3, iou=0.5) -> list[TrackedPerson]:
