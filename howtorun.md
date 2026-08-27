@@ -91,3 +91,10 @@ classifier:
 Events whose behavior has a classifier are kept only if `P(positive) >= threshold`
 (computed from the event's keypoint sequence). Behaviors without a model, or
 sequences shorter than `min_sequence_frames`, pass through unfiltered.
+
+
+Cách dùng:
+
+Build lại khi cần: powershell -ExecutionPolicy Bypass -File packaging\build_exe.ps1
+Kết quả: thư mục dist\HandHeadGUI\ (~1.24 GB) chứa HandHeadGUI.exe + _internal\ + config\, models\, yolo*.pt
+Copy cho khách: zip cả thư mục dist\HandHeadGUI → khách giải nén và double-click HandHeadGUI.exe. Không cần cài Python hay internet.
