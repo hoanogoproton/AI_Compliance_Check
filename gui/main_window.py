@@ -19,10 +19,10 @@ from detection.config_loader import load_config
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Hand-to-Head Detection")
+        self.setWindowTitle("AI compliance check")
         self.resize(1280, 860)
 
-        self.settings = QSettings("HandHead", "HandHeadDetection")
+        self.settings = QSettings("HandHead", "AI compliance check")
 
         self.current_video: str | None = None
         self.config_path: str = str(Path("config.yaml").resolve())

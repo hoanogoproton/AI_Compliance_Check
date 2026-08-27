@@ -13,7 +13,7 @@ from gui.theme import apply_theme
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName("Hand-to-Head Detection")
+    app.setApplicationName("AI compliance check")
     app.setOrganizationName("HandHead")
     apply_theme(app)
 

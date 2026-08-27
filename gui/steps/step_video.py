@@ -17,7 +17,7 @@ class StepVideo(QWidget):
     def __init__(self, main_window):
         super().__init__()
         self.main_window = main_window
-        self.settings = QSettings("HandHead", "HandHeadDetection")
+        self.settings = QSettings("HandHead", "AI compliance check")
 
         layout = QVBoxLayout(self)
 
