@@ -5,10 +5,10 @@ crop:
 - 890
 model:
   path: yolo26n-pose.pt
-  conf: 0.4
-  iou: 0.2
+  conf: 0.5
+  iou: 0.4
 output:
-  dir: ./outputs/CA927-FB-RAI7-No3-20260822-093621_P2
+  dir: ./outputs/RAI7-1_fix
   visualize: true
   context_seconds: 2
   crop_padding: 10
@@ -115,15 +115,15 @@ behaviors:
 - name: body_turn
   enabled: true
   params:
-    min_angle: 30.0
+    min_angle: 70.0
     window_seconds: 2.0
     velocity_threshold_deg_s: 30.0
-    smoothing_frames: 2
-    track_gap_frames: 2
-    cooldown_frames: 2
+    smoothing_frames: 3
+    track_gap_frames: 10
+    cooldown_frames: 7
     stale_frames: 70
-    confirmation_frames: 2
-    max_gap_frames: 2
+    confirmation_frames: 3
+    max_gap_frames: 3
     min_event_frames: 7
 - name: hand_snatch_object
   enabled: false
@@ -149,7 +149,7 @@ behaviors:
     window_frames: 21
     max_turns: 1
     confirmation_frames: 1
-    max_gap_frames: 1
+    max_gap_frames: 2
     min_event_frames: 1
 - name: head_shake
   enabled: false

@@ -97,6 +97,20 @@ def angular_difference_deg(a: float, b: float) -> float:
     return min(diff, 180.0 - diff)
 
 
+def signed_angle_step_deg(current: float, previous: float) -> float:
+    d = (current - previous + 90.0) % 180.0 - 90.0
+    return d
+
+
+def circular_mean_resultant_deg(angles: list[float]) -> tuple[float, float]:
+    if not angles:
+        return 0.0, 0.0
+    x = sum(math.cos(math.radians(a)) for a in angles)
+    y = sum(math.sin(math.radians(a)) for a in angles)
+    r = math.sqrt(x * x + y * y) / len(angles)
+    return math.degrees(math.atan2(y, x)), r
+
+
 def ear_dominance_ratio(kpts: np.ndarray, min_conf: float = 0.1) -> float | None:
     le_x, le_y, le_c = get_keypoint(kpts, 3)
     re_x, re_y, re_c = get_keypoint(kpts, 4)

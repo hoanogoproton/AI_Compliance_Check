@@ -78,7 +78,7 @@ behaviors:
     max_gap_frames: 1
     min_event_frames: 1
 - name: hand_shake_object
-  enabled: false
+  enabled: true
   params:
     zones:
     - JIG
@@ -100,15 +100,15 @@ behaviors:
     max_gap_frames: 2
     min_event_frames: 7
 - name: hand_snatch_object
-  enabled: false
+  enabled: true
   params:
     zones:
     - JIG
-    min_grasp_frames: 1
-    snatch_velocity_ratio: 0.1
+    min_grasp_frames: 7
+    snatch_velocity_ratio: 0.3
     approach_window: 14
     velocity_baseline_ratio: 1.5
-    keypoint_conf_threshold: 0.3
+    keypoint_conf_threshold: 0.5
     confirmation_frames: 1
     max_gap_frames: 1
     min_event_frames: 1
