@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-# PyInstaller spec for the Hand-to-Head Detection GUI.
+# PyInstaller spec for the AIComplianceCheck GUI.
 # Build (from project root):
 #   .venv\Scripts\python.exe -m PyInstaller --clean --noconfirm packaging\handhead_gui.spec
 from pathlib import Path
@@ -47,7 +47,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="HandHeadGUI",
+    name="AIComplianceCheck",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -61,5 +61,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name="HandHeadGUI",
+    name="AIComplianceCheck",
 )

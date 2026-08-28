@@ -13,7 +13,7 @@ try {
     & $venvPython -m PyInstaller --clean --noconfirm packaging\handhead_gui.spec
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed with exit code $LASTEXITCODE" }
 
-    $dist = Join-Path $root "dist\HandHeadGUI"
+    $dist = Join-Path $root "dist\AIComplianceCheck"
 
     # Runtime assets the app resolves via relative paths at run time.
     Copy-Item -Recurse -Force (Join-Path $root "config") "$dist\config"
