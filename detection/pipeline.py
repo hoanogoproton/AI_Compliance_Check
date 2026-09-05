@@ -1,3 +1,4 @@
+import inspect
 import json
 import pickle
 import queue
@@ -28,7 +29,7 @@ from features import extract_features
 MAX_CACHED_FRAMES = 100000
 
 
-def _build_behaviors(config: dict) -> list[BaseBehavior]:
+def _build_behaviors(config: dict, fps: float | None = None) -> list[BaseBehavior]:
     zones = load_zones(config)
     registry = get_registry()
     behaviors: list[BaseBehavior] = []
@@ -52,7 +53,16 @@ def _build_behaviors(config: dict) -> list[BaseBehavior]:
                 if z is None:
                     raise ValueError(f"Zone '{zn}' not found in config for behavior '{bcfg['name']}'")
                 resolved_zones.append(z)
-        behavior = cls(bcfg["params"], zones=resolved_zones)
+        # Only pass fps to behaviors that support it (fps-aware behaviors)
+        kwargs: dict = {}
+        if fps is not None and fps > 0:
+            try:
+                accepts_fps = "fps" in inspect.signature(cls.__init__).parameters
+            except (TypeError, ValueError):
+                accepts_fps = False
+            if accepts_fps:
+                kwargs["fps"] = float(fps)
+        behavior = cls(bcfg["params"], zones=resolved_zones, **kwargs)
         behaviors.append(behavior)
     return behaviors
 
@@ -334,6 +344,19 @@ def run_pipeline(
     output_path.mkdir(parents=True, exist_ok=True)
     video_stem = Path(video_path).stem
 
+    # Open the video first so the real fps is known before building behaviors
+    # (fps-aware behaviors convert time-based parameters using this value).
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise RuntimeError(f"Could not open video: {video_path}")
+
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if fps <= 0:
+        fps = 30.0
+    if total_frames <= 0:
+        total_frames = 999999
+
     if config_path:
         config = load_config(config_path)
         model_path = config.get("model", {}).get("path", model_path)
@@ -343,7 +366,7 @@ def run_pipeline(
         context_seconds = config.get("output", {}).get("context_seconds", context_seconds)
         crop_padding = config.get("output", {}).get("crop_padding", crop_padding)
         debug_keypoints = config.get("output", {}).get("debug_keypoints", debug_keypoints)
-        behaviors = _build_behaviors(config)
+        behaviors = _build_behaviors(config, fps=fps)
         zones_export = []
         for b in behaviors:
             if hasattr(b, 'zones') and b.zones:
@@ -384,22 +407,11 @@ def run_pipeline(
 
     model = load_pose_model(model_path)
 
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        raise RuntimeError(f"Could not open video: {video_path}")
-
     crop_region = None
     if config_path:
         raw_crop = config.get("crop")
         if raw_crop:
             crop_region = tuple(raw_crop)
-
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    if fps <= 0:
-        fps = 30.0
-    if total_frames <= 0:
-        total_frames = 999999
 
     frame_data_cache = {}
     events: list[Event] = []

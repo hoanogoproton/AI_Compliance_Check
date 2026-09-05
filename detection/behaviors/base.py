@@ -19,9 +19,12 @@ class DetectionResult:
 class BaseBehavior(ABC):
     name: str = ""
 
-    def __init__(self, params: dict, zones: list | None = None):
+    def __init__(self, params: dict, zones: list | None = None, fps: float | None = None):
         self.params = params
         self.zones = zones or []
+        # Video frame rate, used by fps-aware behaviors to convert time-based
+        # parameters (seconds) into frame counts. Falls back to 30 when unknown.
+        self.fps = float(fps) if fps is not None and fps > 0 else 30.0
         confirmation_frames = params.get("confirmation_frames", CONFIRMATION_FRAMES)
         max_gap_frames = params.get("max_gap_frames", MAX_GAP_FRAMES)
         min_event_frames = params.get("min_event_frames", MIN_EVENT_FRAMES)

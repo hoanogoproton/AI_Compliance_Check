@@ -89,13 +89,14 @@ behaviors:
   params:
     zones:
     - Hand_Shake_OBJ
-    window_frames: 40
+    window_seconds: 2.0
     min_reversals: 3
     min_displacement_ratio: 0.01
+    min_amplitude_ratio: 0.12
     keypoint_conf_threshold: 0.5
-    confirmation_frames: 5
-    max_gap_frames: 10
-    min_event_frames: 10
+    confirmation_frames: 2
+    max_gap_frames: 3
+    min_event_frames: 7
 - name: hand_snatch_object
   enabled: true
   params:

@@ -82,12 +82,19 @@ behaviors:
   params:
     zones:
     - JIG
-    window_frames: 21
-    min_reversals: 1
+    window_seconds: 2.0
+    min_reversals: 3
     min_displacement_ratio: 0.01
-    keypoint_conf_threshold: 0.3
+    min_amplitude_ratio: 0.12
+    min_frequency_hz: 0.5
+    max_frequency_hz: 3.4
+    smoothing_tau: 0.1
+    keypoint_conf_threshold: 0.5
+    confirmation_frames: 2
+    max_gap_frames: 3
+    min_event_frames: 7
 - name: body_turn
-  enabled: true
+  enabled: false
   params:
     min_angle: 30.0
     window_seconds: 2.0

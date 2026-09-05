@@ -8,7 +8,7 @@ model:
   conf: 0.5
   iou: 0.4
 output:
-  dir: ./outputs/RAI7-1_fix
+  dir: ./outputs/CA927-FB-RAI7-No3-20260822-093621_P2
   visualize: true
   context_seconds: 2
   crop_padding: 10
@@ -78,14 +78,14 @@ behaviors:
     max_gap_frames: 10
     min_event_frames: 30
 - name: leave_zone
-  enabled: false
+  enabled: true
   params:
     zones:
     - Leave
     min_stay_frames: 14
     leave_flash_frames: 14
 - name: hand_in_zone
-  enabled: false
+  enabled: true
   params:
     zones:
     - PHC
@@ -97,7 +97,7 @@ behaviors:
     max_gap_frames: 1
     min_event_frames: 3
 - name: head_turn
-  enabled: false
+  enabled: true
   params:
     turn_threshold_ratio: 0.3
     window_frames: 21
@@ -108,10 +108,17 @@ behaviors:
 - name: hand_shake_object
   enabled: false
   params:
-    window_frames: 28
+    window_seconds: 2.0
     min_reversals: 3
     min_displacement_ratio: 0.01
-    keypoint_conf_threshold: 0.3
+    min_amplitude_ratio: 0.12
+    min_frequency_hz: 0.5
+    max_frequency_hz: 3.4
+    smoothing_tau: 0.1
+    keypoint_conf_threshold: 0.5
+    confirmation_frames: 2
+    max_gap_frames: 3
+    min_event_frames: 7
 - name: body_turn
   enabled: true
   params:

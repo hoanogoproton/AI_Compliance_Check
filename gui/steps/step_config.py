@@ -61,10 +61,17 @@ BEHAVIOR_PARAMS = {
     ],
     "hand_shake_object": [
         ("zones", "zone_multi", None, None, None),
-        ("window_frames", int, 1, 300, 40),
+        ("window_seconds", float, 0.5, 10.0, 2.0),
         ("min_reversals", int, 1, 30, 3),
         ("min_displacement_ratio", float, 0.001, 1.0, 0.01),
+        ("min_amplitude_ratio", float, 0.01, 1.0, 0.12),
+        ("min_frequency_hz", float, 0.0, 10.0, 0.5),
+        ("max_frequency_hz", float, 0.5, 10.0, 3.4),
+        ("smoothing_tau", float, 0.01, 1.0, 0.1),
         ("keypoint_conf_threshold", float, 0.0, 1.0, 0.5),
+        ("confirmation_frames", int, 1, 300, 2),
+        ("max_gap_frames", int, 0, 300, 3),
+        ("min_event_frames", int, 1, 300, 7),
     ],
     "body_turn": [
         ("min_angle", float, 1.0, 180.0, 45.0),
