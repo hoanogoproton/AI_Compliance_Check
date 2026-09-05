@@ -38,6 +38,43 @@ Saves zones into `config.yaml` (or specified `--config` file).
 | `--crop-padding` | 20 | Padding around cropped events |
 | `--debug-keypoints` | False | Export clips with skeleton overlay |
 
+## Folder watcher (auto process NEW videos)
+
+Create `watch_folders.csv` with columns `folder,config` (optional third column
+`output_dir`). All videos dropped into a folder are detected with that folder's
+own config:
+
+```csv
+folder,config
+D:/CameraDrop/RAI7,config/config_4.yaml
+./videos/watch_demo,./config/config_3.yaml
+```
+
+Run the watcher:
+
+```bash
+python watch_folders.py watch_folders.csv
+```
+
+Behavior:
+
+- Videos already inside a folder when the watcher first sees it are **IGNORED**
+  — only videos that appear **afterwards** are processed.
+- A new video is picked up once its file size has stopped changing (a file
+  still being copied is waited for).
+- Results go to `outputs/<video_name>/`: event clips + `<video>_metadata.json`
+  (always), plus the full annotated video unless `--no-visualize`.
+- The **original video is deleted** after a successful run. On error it is
+  kept and retried up to 2 times (`--max-retries`).
+- `outputs/watch_state.json` journals processed / failed / ignored videos
+  (useful for auditing since originals are deleted).
+- The CSV is re-read every poll, so folders can be added without restarting.
+- Stop with `Ctrl+C`.
+
+Useful flags: `--poll-interval 15`, `--model yolo26n-pose.pt`, `--conf`,
+`--iou`, `--debug-keypoints`, `--output-dir`, `--journal`,
+`--max-cycles N` (stop after N scans — for testing).
+
 ## Running tests
 
 ```bash
