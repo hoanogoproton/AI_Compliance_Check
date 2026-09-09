@@ -1,10 +1,202 @@
+from operator import index
 import os
 from pathlib import Path
+from pydoc import text
 
 from playwright.sync_api import Page, Playwright, sync_playwright
 
 CAMERA_NAME = "CA927-FB-RAI7-No3"
+def click_download_dialog_button(page: Page, index: int) -> None:
+    """Click nút Download thật bên trong hộp thoại xác nhận tải xuống."""
 
+    # Ưu tiên phần text của nút nằm trong dialog đang hiển thị
+    candidates = [
+        lambda: page.locator(
+            ".x-window:visible .x-btn-text"
+        ).filter(has_text="Download").last,
+
+        lambda: page.locator(
+            ".syno-window:visible .x-btn-text"
+        ).filter(has_text="Download").last,
+
+        lambda: page.locator(
+            ".x-window:visible .syno-ux-button"
+        ).filter(has_text="Download").last,
+
+        lambda: page.locator(
+            ".syno-window:visible .syno-ux-button"
+        ).filter(has_text="Download").last,
+
+        lambda: page.get_by_role(
+            "button",
+            name="Download",
+            exact=True,
+        ).last,
+
+        lambda: page.get_by_text(
+            "Download",
+            exact=True,
+        ).last,
+    ]
+
+    errors = []
+
+    for number, make_locator in enumerate(candidates, start=1):
+        button = make_locator()
+
+        try:
+            button.wait_for(
+                state="visible",
+                timeout=5000,
+            )
+
+            button.scroll_into_view_if_needed(
+                timeout=3000
+            )
+
+            # Click phần tử nút thật
+            button.click(
+                timeout=5000,
+                force=True,
+            )
+
+            print(
+                f"[click] nut Download trong dialog video "
+                f"{index + 1}: dùng locator #{number}"
+            )
+            return
+
+        except Exception as exc:
+            errors.append(
+                f"#{number}: {type(exc).__name__}"
+            )
+
+    raise RuntimeError(
+        f"Không click được nút Download trong dialog "
+        f"của video {index + 1}. "
+        f"Lỗi: {'; '.join(errors)}"
+    )
+def get_recording_rows(page: Page):
+    """Lấy các phần tử chứa chính xác tên camera trong kết quả tìm kiếm."""
+
+    matches = page.get_by_text(
+        CAMERA_NAME,
+        exact=True,
+    )
+
+    visible_items = []
+
+    for index in range(matches.count()):
+        item = matches.nth(index)
+
+        try:
+            if item.is_visible():
+                visible_items.append(item)
+        except Exception:
+            continue
+
+    return visible_items
+
+
+def right_click_recording(
+    page: Page,
+    index: int,
+    total: int,
+) -> None:
+    """Click phải vào kết quả video thứ index."""
+
+    last_error = None
+
+    for attempt in range(1, 6):
+        try:
+            items = get_recording_rows(page)
+
+            if index >= len(items):
+                raise RuntimeError(
+                    f"Không tìm thấy video thứ {index + 1}. "
+                    f"Hiện có {len(items)} video hiển thị."
+                )
+
+            item = items[index]
+            item.wait_for(state="visible", timeout=5000)
+            item.scroll_into_view_if_needed(timeout=5000)
+
+            print(
+                f"[download] click phải video "
+                f"{index + 1}/{total}, lần thử {attempt}"
+            )
+
+            # Click trên đúng phần tử chữ camera.
+            # Sự kiện chuột phải sẽ nổi lên dòng kết quả bên ngoài.
+            item.click(
+                button="right",
+                timeout=5000,
+                force=True,
+            )
+
+            return
+
+        except Exception as exc:
+            last_error = exc
+            print(
+                f"[download] click video lần {attempt} lỗi: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            page.wait_for_timeout(1000)
+
+    raise RuntimeError(
+        f"Không thể click phải video thứ {index + 1} sau 5 lần thử."
+    ) from last_error
+
+def click_checkbox_near_text(page: Page, text: str) -> None:
+    """Click checkbox nằm gần chữ Date hoặc Time."""
+
+    label = page.get_by_text(text, exact=True).first
+    label.wait_for(state="visible", timeout=5000)
+
+    checkbox = None
+
+    # Tìm checkbox trong các cấp phần tử cha của chữ Date/Time
+    for parent_level in range(1, 5):
+        parent = label.locator(
+            "xpath=" + "/.." * parent_level
+        )
+
+        candidate = parent.locator(
+            "input[type='checkbox'], "
+            ".syno-ux-checkbox-icon, "
+            ".x-form-checkbox"
+        ).first
+
+        if candidate.count() == 0:
+            continue
+
+        try:
+            candidate.wait_for(state="visible", timeout=1000)
+            checkbox = candidate
+            break
+        except Exception:
+            pass
+
+    if checkbox is None:
+        raise RuntimeError(
+            f"Không tìm thấy checkbox nằm bên cạnh chữ '{text}'."
+        )
+
+    print(f"[checkbox] tìm thấy checkbox của '{text}'")
+
+    # Thử click bình thường trước
+    try:
+        checkbox.click(timeout=3000)
+    except Exception:
+        # Nếu checkbox bị lớp giao diện che, thử click cưỡng chế
+        try:
+            checkbox.click(timeout=3000, force=True)
+        except Exception:
+            # Cuối cùng gọi click bằng JavaScript
+            checkbox.evaluate("el => el.click()")
+
+    print(f"[checkbox] đã click checkbox của '{text}'")
 
 def tick_camera_checkbox(page: Page, camera_name: str) -> None:
     """Tick checkbox ở cột đầu tiên của dòng chứa tên camera trong grid ExtJS.
@@ -356,7 +548,14 @@ def run(playwright: Playwright) -> None:
     debug_checkpoint(
         page, "sau khi tick checkbox camera (truoc khi chon ngay/gio)"
     )
-    page.pause()  # tạm dừng để người dùng kiểm tra giao diện trước khi chọn ngày/giờ
+
+    print(f"[checkbox] đã click checkbox của '{text}'")
+    click_checkbox_near_text(page, "Date")
+
+    # Tick checkbox Time
+    click_checkbox_near_text(page, "Time")
+
+
 
     # ---- Chọn khoảng ngày/giờ: gán TRỰC TIẾP qua API ExtJS ----
     # Click mở lịch/dropdown trên Synology không đáng tin (input bị lớp
@@ -365,92 +564,85 @@ def run(playwright: Playwright) -> None:
     # ở cả 2 lịch); giờ bắt đầu/kết thúc = 13:00/14:00.
     set_search_range(
         page,
-        day=8,
+        day=9,
         month=9,
         year=2026,
-        begin_time="13:00",
-        end_time="14:00",
+        begin_time="10:00",
+        end_time="11:00",
     )
+
 
     # (việc chọn giờ đã gộp vào set_search_range phía trên)
 
     # Nút xác nhận của dialog: chỉ xét nút nằm trong FOOTER của cửa sổ dialog
     # (tránh nhầm với nút Search trên thanh công cụ phía sau).
-    click_first_working(
-        page,
-        [
-            lambda: page.locator(
-                ".x-window .syno-ux-button:visible, "
-                ".syno-window .syno-ux-button:visible",
-                has_text="Search",
-            ),
-            lambda: page.locator(
-                ".x-window .syno-ux-button:visible, "
-                ".syno-window .syno-ux-button:visible",
-                has_text="OK",
-            ),
-            lambda: page.locator(
-                ".x-window .x-btn-text:visible, "
-                ".syno-window .x-btn-text:visible",
-                has_text="Search",
-            ),
-            lambda: page.locator(
-                ".x-window .x-btn-text:visible, "
-                ".syno-window .x-btn-text:visible",
-                has_text="OK",
-            ),
-            lambda: page.locator("#ext-gen206"),
-        ],
-        "nut xac nhan dialog (cu: #ext-gen206)",
-    )
+    # Click nút Search màu xanh ở phía dưới dialog
+    search_button = page.get_by_role(
+        "button",
+        name="Search",
+        exact=True,
+    ).last
 
-    def download_recording(
-        recording_id: str, save_name: str, ok_fallback: str
-    ) -> None:
-        """Click phải node ghi hình rồi tải file về.
+    search_button.wait_for(state="visible", timeout=5000)
+    search_button.click(timeout=5000)
 
-        recording_id: mã số bản ghi trong CSDL Surveillance Station - là
-        PHẦN ĐUÔI của id node (ext-comp-1252-0_4703634 -> '4703634').
-        Phần đuôi này ổn định giữa các phiên, chỉ phần đầu 'ext-comp-...'
-        là tự sinh, nên dùng bộ chọn [id$="_<recording_id>"].
-        """
-        click_first_working(
-            page,
-            [
-                lambda: page.locator(f'[id$="_{recording_id}"]').filter(
-                    has_text=CAMERA_NAME
-                ),
-                lambda: page.locator(f"#ext-comp-1252-0_{recording_id}"),
-            ],
-            f"node ghi hình {recording_id} (click phải)",
-            button="right",
-        )
+    print("[click] đã bấm nút Search màu xanh ở cuối dialog")
 
-        page.get_by_role("link", name="Download").click()
+    def download_all_recordings() -> None:
+        """Tải toàn bộ video trong kết quả tìm kiếm."""
 
-        with page.expect_download() as download_info:
-            click_first_working(
-                page,
-                [
-                    lambda: page.locator(".syno-ux-button:visible", has_text="OK"),
-                    lambda: page.locator(".x-btn-text:visible", has_text="OK"),
-                    lambda: page.locator(ok_fallback),
-                ],
-                f"nut OK cua hop thoai download ({ok_fallback})",
+        # Chờ danh sách kết quả hiển thị hoàn toàn
+        page.wait_for_timeout(2000)
+
+        items = get_recording_rows(page)
+        total = len(items)
+
+        if total == 0:
+            raise RuntimeError(
+                f"Không tìm thấy video nào có tên chính xác '{CAMERA_NAME}'."
             )
 
-        download = download_info.value
-        target = download_dir / (
-            save_name + Path(download.suggested_filename).suffix
-        )
-        download.save_as(str(target))
-        print(f"Đã lưu file tại: {target}")
+        print(f"[download] tìm thấy {total} video cần tải")
 
-    # Tải file thứ nhất
-    download_recording("4703634", f"{CAMERA_NAME}_1", "#ext-gen2525")
+        for index in range(total):
+            # Click phải video hiện tại
+            right_click_recording(
+                page,
+                index,
+                total,
+            )
 
-    # Tải file thứ hai
-    download_recording("4703575", f"{CAMERA_NAME}_2", "#ext-gen2610")
+            # Menu chuột phải có thể dùng link hoặc phần tử text
+            download_menu = page.get_by_text(
+                "Download",
+                exact=True,
+            ).last
+
+            download_menu.wait_for(
+                state="visible",
+                timeout=5000,
+            )
+            download_menu.click(timeout=5000)
+
+            # Xác nhận tải xuống
+            with page.expect_download(timeout=30000) as download_info:
+                click_download_dialog_button(page, index)
+
+            download = download_info.value
+
+            target = download_dir / (
+                f"{CAMERA_NAME}_{index + 1:02d}"
+                f"{Path(download.suggested_filename).suffix}"
+            )
+
+            download.save_as(str(target))
+
+            print(f"[download] đã lưu file tại: {target}")
+
+            # Đợi giao diện trở lại ổn định trước khi lấy video tiếp theo
+            page.wait_for_timeout(1000)
+
+    download_all_recordings()
 
     context.close()
     browser.close()
