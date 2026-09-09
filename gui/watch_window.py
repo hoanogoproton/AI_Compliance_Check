@@ -11,10 +11,10 @@ signals, so every handler below runs on the GUI thread.
 from __future__ import annotations
 
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -37,6 +37,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from get_video import previous_hour_window
+from gui.workers.fetch_worker import FetchWorker
 from gui.workers.watch_worker import WatchWorker
 from gui.widgets.live_preview import LivePreviewWidget
 from watch_folders import load_watch_csv
@@ -77,6 +79,12 @@ class WatchWindow(QMainWindow):
         self._current_video: str | None = None   # name of the video in progress
         self._last_frame_t: float | None = None  # monotonic ts of last preview frame
         self._ema_frame_dt: float | None = None  # smoothed preview frame interval (s)
+        # Tự động tải video "giờ trôi qua" từ Surveillance Station
+        self._fetch_worker: FetchWorker | None = None
+        self._fetch_reschedule = False
+        self._fetch_timer = QTimer(self)
+        self._fetch_timer.setSingleShot(True)
+        self._fetch_timer.timeout.connect(self._on_fetch_tick)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -123,7 +131,16 @@ class WatchWindow(QMainWindow):
             "Hiển thị video đang xử lý kèm bounding box, keypoint, zone…\n"
             "Có thể bật/tắt ngay cả khi đang chạy."
         )
-        row1.addWidget(self.preview_check)
+        self.auto_fetch_check = QCheckBox("Tự động tải video giờ trước")
+        self.auto_fetch_check.setChecked(True)
+        self.auto_fetch_check.setToolTip(
+            "Khi trình theo dõi đang chạy: tải ngay video của giờ vừa kết thúc từ\n"
+            "Surveillance Station cho mọi camera trong tệp CSV (tên camera = tên\n"
+            "thư mục), rồi tự lặp lại mỗi khi sang giờ mới.\n"
+            "Ví dụ khởi động lúc 14:20 ngày 9/9/2026 → tải video 13:00-14:00."
+        )
+        self.auto_fetch_check.toggled.connect(self._on_auto_fetch_toggled)
+        row1.addWidget(self.auto_fetch_check)
         root.addLayout(row1)
 
         row2 = QHBoxLayout()
@@ -133,6 +150,13 @@ class WatchWindow(QMainWindow):
         self.out_btn = QPushButton("Chọn...")
         self.out_btn.clicked.connect(self._browse_output)
         row2.addWidget(self.out_btn)
+
+        self.fetch_now_btn = QPushButton("Tải video giờ trước ngay")
+        self.fetch_now_btn.setToolTip(
+            "Tải ngay video của giờ vừa kết thúc cho mọi camera trong tệp CSV."
+        )
+        self.fetch_now_btn.clicked.connect(self._on_fetch_now)
+        row2.addWidget(self.fetch_now_btn)
 
         row2.addStretch(1)
 
@@ -254,16 +278,28 @@ class WatchWindow(QMainWindow):
             visualize=self.visualize_check.isChecked(),
         )
 
+        if self.auto_fetch_check.isChecked():
+            # Tải ngay khung "giờ trôi qua" rồi tự hẹn các chu kỳ đầu giờ sau.
+            self._start_fetch(reschedule=True)
+
     def _on_stop(self):
         if self._worker is None:
             return
         self.stop_btn.setEnabled(False)
         self._append_log("Đã yêu cầu dừng — video hiện tại sẽ chạy xong trước khi thoát.")
+        self._fetch_timer.stop()
+        if self._fetch_worker is not None:
+            self._fetch_worker.stop()
+            self._append_log(
+                "[tải video] Sẽ dừng sau camera hiện tại. Video đã tải nhưng chưa "
+                "xử lý sẽ bị coi là 'đã có sẵn' ở lần khởi động kế tiếp."
+            )
         self._worker.stop()
 
     def _on_finished(self, code: int):
         self._worker = None
         self._set_running(False)
+        self._fetch_timer.stop()
         if code == 0:
             self._append_log("Trình theo dõi đã dừng.")
         else:
@@ -280,6 +316,96 @@ class WatchWindow(QMainWindow):
             self.poll_spin, self.visualize_check,
         ):
             widget.setEnabled(not running)
+
+    # -- auto fetch: video "giờ trôi qua" từ Surveillance Station ------------
+
+    def _on_fetch_now(self):
+        if self._fetch_worker is not None:
+            QMessageBox.information(
+                self, "Đang tải",
+                "Tiến trình tải video vẫn đang chạy, vui lòng đợi.",
+            )
+            return
+        if self._worker is None:
+            self._append_log(
+                "[tải video] Lưu ý: trình theo dõi chưa chạy — video tải về chỉ "
+                "được xử lý tự động nếu watcher đang chạy khi file xuất hiện."
+            )
+        self._start_fetch(reschedule=False)
+
+    def _on_auto_fetch_toggled(self, checked: bool):
+        if checked and self._worker is not None:
+            self._append_log("[tải video] Đã bật tự động tải theo giờ.")
+            self._start_fetch(reschedule=True)
+        elif not checked:
+            self._fetch_timer.stop()
+            self._append_log("[tải video] Đã tắt tự động tải theo giờ.")
+
+    def _on_fetch_tick(self):
+        # QTimer bắn mỗi đầu giờ; chỉ tải khi watcher vẫn đang chạy.
+        if not self.auto_fetch_check.isChecked() or self._worker is None:
+            return
+        if self._fetch_worker is not None:
+            self._append_log(
+                "[tải video] Lần tải trước chưa xong — sẽ tự thử lại khi xong."
+            )
+            return
+        self._start_fetch(reschedule=True)
+
+    def _start_fetch(self, reschedule: bool):
+        if self._fetch_worker is not None:
+            self._append_log("[tải video] Đang có tiến trình tải — bỏ qua yêu cầu mới.")
+            return
+        begin_dt, end_dt = previous_hour_window()
+        csv_path = self.csv_edit.text().strip() or DEFAULT_CSV
+        out_dir = self.out_edit.text().strip() or DEFAULT_OUTPUT_DIR
+        self._append_log(
+            f"[tải video] Tải video {begin_dt:%H:%M}-{end_dt:%H:%M} ngày "
+            f"{end_dt:%d/%m/%Y} cho các camera trong {csv_path}..."
+        )
+        self._fetch_reschedule = reschedule
+        self._fetch_worker = FetchWorker()
+        self._fetch_worker.event.connect(self._on_fetch_event)
+        self._fetch_worker.finished.connect(self._on_fetch_finished)
+        self._fetch_worker.start(
+            csv_path=csv_path,
+            begin_dt=begin_dt,
+            end_dt=end_dt,
+            state_path=Path(out_dir) / "fetch_state.json",
+        )
+
+    def _on_fetch_event(self, ev: dict):
+        etype = ev.get("type")
+        if etype == "log":
+            self._append_log(ev.get("message", ""))
+        elif etype == "fetch_done":
+            self._append_log(
+                f"[tải video] Kết quả: {ev.get('ok', 0)} thành công, "
+                f"{ev.get('skipped', 0)} đã tải trước đó, {ev.get('failed', 0)} lỗi."
+            )
+
+    def _on_fetch_finished(self, code: int):
+        self._fetch_worker = None
+        if code != 0:
+            self._append_log("[tải video] Tiến trình tải kết thúc với lỗi.")
+        if (
+            self._fetch_reschedule
+            and self.auto_fetch_check.isChecked()
+            and self._worker is not None
+        ):
+            self._schedule_next_fetch()
+
+    def _schedule_next_fetch(self):
+        now = datetime.now()
+        hour_start = now.replace(minute=0, second=0, microsecond=0)
+        next_hour = hour_start + timedelta(hours=1)
+        # +10 giây để Surveillance Station kịp ghi xong video cuối giờ.
+        delay_ms = int((next_hour - now).total_seconds() * 1000) + 10_000
+        self._fetch_timer.start(max(1000, min(delay_ms, 2**31 - 1)))
+        self._append_log(
+            f"[tải video] Hẹn chu kỳ kế tiếp lúc {next_hour:%H:%M} "
+            f"(sẽ tải {hour_start:%H:%M}-{next_hour:%H:%M})."
+        )
 
     # -- events (all on the GUI thread via queued connection) ---------------
 
@@ -456,13 +582,15 @@ class WatchWindow(QMainWindow):
 
     def closeEvent(self, event):
         if self._worker is None:
+            self._fetch_timer.stop()
             event.accept()
             return
         reply = QMessageBox.question(
             self,
             "Đang chạy",
             "Trình theo dõi đang chạy. Dừng và thoát?\n"
-            "(Video đang xử lý sẽ chạy xong trước khi thoát.)",
+            "(Video đang xử lý sẽ chạy xong trước khi thoát; tiến trình tải "
+            "video đang chạy sẽ bị ngắt.)",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -472,6 +600,11 @@ class WatchWindow(QMainWindow):
         # Keep the event loop alive (window hidden) so the current video can
         # finish and its journal entry is written before the process exits.
         self._close_after_stop = True
+        # Ngừng hẹn/tải video: không khởi động chu kỳ mới khi đang thoát.
+        self.auto_fetch_check.setChecked(False)
+        self._fetch_timer.stop()
+        if self._fetch_worker is not None:
+            self._fetch_worker.stop()
         self._worker.stop()
         self.hide()
         event.ignore()

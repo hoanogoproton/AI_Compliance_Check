@@ -139,3 +139,28 @@ Copy cho khách: zip cả thư mục dist\HandHeadGUI → khách giải nén và
 python -m playwright codegen http://172.17.108.208:116/
 
 python -m gui.watch_app, python gui/watch_app.py
+
+## Auto-download previous hour from Surveillance Station (watch GUI)
+
+`python -m gui.watch_app` (hoặc `python gui/watch_app.py`):
+
+- Giữ bật **"Tự động tải video giờ trước"** (mặc định ON) rồi bấm **Khởi động**.
+  Ứng dụng tải ngay video của giờ vừa kết thúc từ Surveillance Station cho mọi
+  camera trong `watch_folders.csv` (tên camera = tên thư mục, video lưu vào
+  đúng thư mục đó), rồi tự lặp lại mỗi khi sang giờ mới.
+- Ví dụ: khởi động lúc 14:20 ngày 09/09/2026 → tải video 13:00-14:00 của cùng
+  ngày. Chạy lúc 00:05 → tải 23:00-00:00 của hôm trước.
+- Video tải về được folder watcher tự nhận và xử lý bằng config của thư mục.
+  `outputs/fetch_state.json` ghi nhớ khung giờ đã tải theo từng camera nên
+  khởi động lại ứng dụng không tải trùng.
+- Nút **"Tải video giờ trước ngay"** chạy một lượt tải thủ công.
+
+CLI độc lập (cùng động cơ, dùng để chạy thử):
+
+```bash
+python get_video.py watch_folders.csv                  # giờ trôi qua từ bây giờ
+python get_video.py --at "2026-09-09 14:20" --headless  # giả lập thời điểm
+```
+
+Thông số kết nối mặc định lấy cứng trong `get_video.py`, có thể ghi đè bằng
+biến môi trường `SS_URL`, `SS_USERNAME`, `SS_PASSWORD`.

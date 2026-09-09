@@ -1,11 +1,55 @@
-from operator import index
+"""Tải video ghi hình từ Synology Surveillance Station theo khung "giờ trôi qua".
+
+Khung giờ được tính theo thời gian thực: chạy lúc 14:20 ngày 9/9/2026 sẽ tải
+video 13:00-14:00 của ngày đó; chạy lúc 00:05 sẽ tải 23:00-00:00 của hôm trước.
+
+Mặc định script đọc `watch_folders.csv` (cột folder,config): với mỗi dòng,
+tên camera = tên thư mục cuối cùng và video được tải về đúng thư mục đó để
+watch_folders.py (folder watcher) tự nhận và xử lý bằng config tương ứng.
+
+Dùng riêng lẻ:
+    python get_video.py                          # khung = giờ trôi qua từ bây giờ
+    python get_video.py --at "2026-09-09 14:20"
+    python get_video.py --headless
+Trong GUI (python -m gui.watch_app) việc tải được hẹn tự động mỗi đầu giờ.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
 import os
+import sys
+from collections.abc import Callable
+from datetime import datetime, timedelta
 from pathlib import Path
-from pydoc import text
 
-from playwright.sync_api import Page, Playwright, sync_playwright
+from playwright.sync_api import Download, Page, Playwright, sync_playwright
 
-CAMERA_NAME = "CA927-FB-RAI7-No3"
+from watch_folders import load_watch_csv
+
+# Thông số kết nối Surveillance Station (ghi đè được bằng biến môi trường).
+DEFAULT_URL = os.getenv(
+    "SS_URL",
+    "http://172.17.108.143:5000/index.cgi"
+    "?launchApp=SYNO.SDS.SurveillanceStation#/signin",
+)
+DEFAULT_USERNAME = os.getenv("SS_USERNAME", "minh-duc")
+DEFAULT_PASSWORD = os.getenv("SS_PASSWORD", "duc20262")
+
+FETCH_STATE_NAME = "fetch_state.json"
+
+
+def previous_hour_window(now: datetime | None = None) -> tuple[datetime, datetime]:
+    """Khung giờ đầy đủ trôi qua gần nhất: tại 14:20 -> (13:00, 14:00).
+
+    Đúng lúc sang giờ/ngày mới (ví dụ 00:00) trả về khung 23:00-00:00 hôm trước.
+    """
+    now = now or datetime.now()
+    end = now.replace(minute=0, second=0, microsecond=0)
+    return end - timedelta(hours=1), end
+
+
 def click_download_dialog_button(page: Page, index: int) -> None:
     """Click nút Download thật bên trong hộp thoại xác nhận tải xuống."""
 
@@ -76,11 +120,11 @@ def click_download_dialog_button(page: Page, index: int) -> None:
         f"của video {index + 1}. "
         f"Lỗi: {'; '.join(errors)}"
     )
-def get_recording_rows(page: Page):
+def get_recording_rows(page: Page, camera_name: str):
     """Lấy các phần tử chứa chính xác tên camera trong kết quả tìm kiếm."""
 
     matches = page.get_by_text(
-        CAMERA_NAME,
+        camera_name,
         exact=True,
     )
 
@@ -100,6 +144,7 @@ def get_recording_rows(page: Page):
 
 def right_click_recording(
     page: Page,
+    camera_name: str,
     index: int,
     total: int,
 ) -> None:
@@ -109,7 +154,7 @@ def right_click_recording(
 
     for attempt in range(1, 6):
         try:
-            items = get_recording_rows(page)
+            items = get_recording_rows(page, camera_name)
 
             if index >= len(items):
                 raise RuntimeError(
@@ -347,11 +392,8 @@ def click_unless_visible(
 
 def set_search_range(
     page: Page,
-    day: int,
-    month: int,
-    year: int,
-    begin_time: str,
-    end_time: str,
+    begin_dt: datetime,
+    end_dt: datetime,
 ) -> None:
     """Gán TRỰC TIẾP giá trị ngày/giờ vào dialog Search qua API ExtJS.
 
@@ -359,7 +401,9 @@ def set_search_range(
     mở khi bị automation click), lấy component của từng ô qua Ext.getCmp
     rồi gọi setValue -> chắc chắn, không phụ thuộc phiên đăng nhập.
     Thứ tự ô theo DOM: datefield/timefield HIỂN THỊ thứ 0 = bắt đầu,
-    thứ 1 = kết thúc (cả hai ô ngày được gán cùng một ngày như bản ghi gốc).
+    thứ 1 = kết thúc. Ô ngày bắt đầu lấy ngày của begin_dt, ô ngày kết thúc
+    lấy ngày của end_dt (khác nhau khi khung giờ vắt qua nửa đêm,
+    ví dụ 23:00-00:00).
     """
     result = page.evaluate(
         """(vals) => {
@@ -386,20 +430,30 @@ def set_search_range(
                 comp.setValue(val);
                 return {ok: !!el.value, id: el.id, value: el.value};
             };
-            const d = new Date(vals.year, vals.month - 1, vals.day);
+            const begin = new Date(
+                vals.begin.year, vals.begin.month - 1, vals.begin.day
+            );
+            const end = new Date(vals.end.year, vals.end.month - 1, vals.end.day);
             return {
-                beginDate: setOne(dates[0], d),
-                endDate: setOne(dates[1], d),
+                beginDate: setOne(dates[0], begin),
+                endDate: setOne(dates[1], end),
                 beginTime: setOne(times[0], vals.beginTime),
                 endTime: setOne(times[1], vals.endTime),
             };
         }""",
         {
-            "day": day,
-            "month": month,
-            "year": year,
-            "beginTime": begin_time,
-            "endTime": end_time,
+            "begin": {
+                "day": begin_dt.day,
+                "month": begin_dt.month,
+                "year": begin_dt.year,
+            },
+            "end": {
+                "day": end_dt.day,
+                "month": end_dt.month,
+                "year": end_dt.year,
+            },
+            "beginTime": begin_dt.strftime("%H:%M"),
+            "endTime": end_dt.strftime("%H:%M"),
         },
     )
     print(f"[datetime] kết quả gán qua ExtJS: {result}")
@@ -477,15 +531,30 @@ def debug_checkpoint(page: Page, label: str) -> None:
         dump_locator_suggestions(page)
 
 
-def run(playwright: Playwright) -> None:
-    # Thư mục lưu file tải xuống
-    download_dir = Path(r"D:\Video\CA927-FB-RAI7-No3")
+def run(
+    playwright: Playwright,
+    camera_name: str,
+    download_dir: str | Path,
+    begin_dt: datetime,
+    end_dt: datetime,
+    *,
+    headless: bool = False,
+    url: str = DEFAULT_URL,
+    username: str = DEFAULT_USERNAME,
+    password: str = DEFAULT_PASSWORD,
+) -> list[Path]:
+    """Tải toàn bộ video ghi hình của một camera trong khung [begin_dt, end_dt).
+
+    Trả về danh sách các tệp đã lưu vào download_dir.
+    """
+    download_dir = Path(download_dir)
     download_dir.mkdir(parents=True, exist_ok=True)
+    saved: list[Path] = []
 
     # Mở Microsoft Edge
     browser = playwright.chromium.launch(
         channel="msedge",
-        headless=False
+        headless=headless
     )
 
     context = browser.new_context(
@@ -494,15 +563,12 @@ def run(playwright: Playwright) -> None:
 
     page = context.new_page()
 
-    page.goto(
-        "http://172.17.108.143:5000/index.cgi"
-        "?launchApp=SYNO.SDS.SurveillanceStation#/signin"
-    )
+    page.goto(url)
 
-    page.get_by_role("textbox", name="Username").fill("minh-duc")
+    page.get_by_role("textbox", name="Username").fill(username)
     page.get_by_role("button", name="Sign In").click()
 
-    page.get_by_role("textbox", name="Password").fill("duc20262")
+    page.get_by_role("textbox", name="Password").fill(password)
     page.get_by_role("button", name="Sign In").click()
 
     page.get_by_role(
@@ -543,13 +609,12 @@ def run(playwright: Playwright) -> None:
     ).first.click()
 
     # Tick chọn checkbox của dòng có tên camera
-    tick_camera_checkbox(page, CAMERA_NAME)
+    tick_camera_checkbox(page, camera_name)
 
     debug_checkpoint(
         page, "sau khi tick checkbox camera (truoc khi chon ngay/gio)"
     )
 
-    print(f"[checkbox] đã click checkbox của '{text}'")
     click_checkbox_near_text(page, "Date")
 
     # Tick checkbox Time
@@ -560,16 +625,9 @@ def run(playwright: Playwright) -> None:
     # ---- Chọn khoảng ngày/giờ: gán TRỰC TIẾP qua API ExtJS ----
     # Click mở lịch/dropdown trên Synology không đáng tin (input bị lớp
     # trigger chặn, picker không mở khi automation click) -> dùng Ext.getCmp
-    # + setValue. Cả 2 ô ngày = cùng một ngày (như bản ghi gốc: chọn ngày 8
-    # ở cả 2 lịch); giờ bắt đầu/kết thúc = 13:00/14:00.
-    set_search_range(
-        page,
-        day=9,
-        month=9,
-        year=2026,
-        begin_time="10:00",
-        end_time="11:00",
-    )
+    # + setValue. Ô ngày bắt đầu = ngày của begin_dt, ô ngày kết thúc =
+    # ngày của end_dt (khác nhau khi khung giờ vắt qua nửa đêm).
+    set_search_range(page, begin_dt, end_dt)
 
 
     # (việc chọn giờ đã gộp vào set_search_range phía trên)
@@ -594,12 +652,12 @@ def run(playwright: Playwright) -> None:
         # Chờ danh sách kết quả hiển thị hoàn toàn
         page.wait_for_timeout(2000)
 
-        items = get_recording_rows(page)
+        items = get_recording_rows(page, camera_name)
         total = len(items)
 
         if total == 0:
             raise RuntimeError(
-                f"Không tìm thấy video nào có tên chính xác '{CAMERA_NAME}'."
+                f"Không tìm thấy video nào có tên chính xác '{camera_name}'."
             )
 
         print(f"[download] tìm thấy {total} video cần tải")
@@ -608,6 +666,7 @@ def run(playwright: Playwright) -> None:
             # Click phải video hiện tại
             right_click_recording(
                 page,
+                camera_name,
                 index,
                 total,
             )
@@ -630,12 +689,8 @@ def run(playwright: Playwright) -> None:
 
             download = download_info.value
 
-            target = download_dir / (
-                f"{CAMERA_NAME}_{index + 1:02d}"
-                f"{Path(download.suggested_filename).suffix}"
-            )
-
-            download.save_as(str(target))
+            target = save_download(download, download_dir, camera_name, index)
+            saved.append(target)
 
             print(f"[download] đã lưu file tại: {target}")
 
@@ -647,7 +702,227 @@ def run(playwright: Playwright) -> None:
     context.close()
     browser.close()
 
+    return saved
+
+
+def save_download(
+    download: Download,
+    download_dir: Path,
+    camera_name: str,
+    index: int,
+) -> Path:
+    """Lưu tệp tải về, ưu tiên tên gốc của Surveillance Station.
+
+    Tên gốc thường chứa mốc thời gian (ví dụ CA927-...-20260909-131530.mp4)
+    nên hữu ích khi tra cứu. Nếu tệp trùng tên đã có thì thêm hậu tố
+    _2, _3, ... để không ghi đè.
+    """
+    suggested = (download.suggested_filename or "").strip()
+    if suggested:
+        stem = Path(suggested).stem
+        suffix = Path(suggested).suffix or ".mp4"
+    else:
+        stem = f"{camera_name}_{index + 1:02d}"
+        suffix = ".mp4"
+    stem = "".join(c if c not in '\\/:*?"<>|' else "_" for c in stem)
+
+    target = download_dir / f"{stem}{suffix}"
+    duplicate = 2
+    while target.exists():
+        target = download_dir / f"{stem}_{duplicate}{suffix}"
+        duplicate += 1
+
+    download.save_as(str(target))
+    return target
+
+
+def fetch_one_camera(
+    camera_name: str,
+    download_dir: str | Path,
+    begin_dt: datetime,
+    end_dt: datetime,
+    *,
+    headless: bool = False,
+    url: str = DEFAULT_URL,
+    username: str = DEFAULT_USERNAME,
+    password: str = DEFAULT_PASSWORD,
+) -> list[Path]:
+    """Mở trình duyệt, đăng nhập và tải video của MỘT camera trong khung giờ."""
+    with sync_playwright() as playwright:
+        return run(
+            playwright,
+            camera_name,
+            download_dir,
+            begin_dt,
+            end_dt,
+            headless=headless,
+            url=url,
+            username=username,
+            password=password,
+        )
+
+
+def load_fetch_state(path: str | Path) -> dict:
+    """Đọc tệp trạng thái đã tải (cấu trúc: {"cameras": {tên: mốc giờ}})."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict) and isinstance(data.get("cameras"), dict):
+            return data
+    except (OSError, json.JSONDecodeError):
+        pass
+    return {"cameras": {}}
+
+
+def save_fetch_state(path: str | Path, state: dict) -> None:
+    """Ghi trạng thái (atomic); lỗi chỉ được log, không làm gãy vòng lặp."""
+    path = Path(path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+    except OSError as e:
+        print(f"WARNING: could not save fetch state {path}: {e}")
+
+
+def fetch_all_from_csv(
+    csv_path: str | Path,
+    begin_dt: datetime,
+    end_dt: datetime,
+    *,
+    headless: bool = False,
+    should_stop: Callable[[], bool] | None = None,
+    log: Callable[[str], None] = print,
+    state_path: str | Path | None = None,
+) -> dict:
+    """Tải video của khung [begin_dt, end_dt) cho TỪNG camera trong tệp CSV.
+
+    Tên camera = tên thư mục cuối trong cột `folder`; video được tải về
+    chính thư mục đó để folder watcher (watch_folders.py) tự nhận và xử lý
+    tiếp bằng config của dòng tương ứng. Camera bị lỗi KHÔNG chặn các
+    camera phía sau. Khung giờ đã tải thành công được ghi vào state file
+    (mặc định outputs/fetch_state.json) để lần chạy sau không tải trùng.
+    """
+    entries, errors = load_watch_csv(csv_path)
+    for error in errors:
+        log(f"[fetch] CẢNH BÁO CSV: {error}")
+
+    state_path = Path(state_path) if state_path else Path("outputs") / FETCH_STATE_NAME
+    state = load_fetch_state(state_path)
+    window_key = end_dt.strftime("%Y-%m-%d %H:%M:%S")
+    window_label = f"{begin_dt:%H:%M}-{end_dt:%H:%M} ngày {end_dt:%d/%m/%Y}"
+
+    results: list[dict] = []
+
+    for entry in entries:
+        folder = Path(entry["folder"])
+        camera = folder.name
+
+        if should_stop is not None and should_stop():
+            log("[fetch] Đã dừng theo yêu cầu.")
+            break
+
+        if state["cameras"].get(camera) == window_key:
+            log(f"[fetch] {camera}: khung {window_label} đã tải trước đó, bỏ qua.")
+            results.append(
+                {"camera": camera, "status": "skipped", "folder": str(folder)}
+            )
+            continue
+
+        log(f"[fetch] {camera}: đang tải khung {window_label} ...")
+        try:
+            saved = fetch_one_camera(camera, folder, begin_dt, end_dt, headless=headless)
+            state["cameras"][camera] = window_key
+            save_fetch_state(state_path, state)
+            log(f"[fetch] {camera}: đã lưu {len(saved)} file.")
+            results.append(
+                {
+                    "camera": camera,
+                    "status": "ok",
+                    "count": len(saved),
+                    "folder": str(folder),
+                }
+            )
+        except Exception as exc:
+            log(f"[fetch] {camera}: LỖI - {type(exc).__name__}: {exc}")
+            results.append(
+                {
+                    "camera": camera,
+                    "status": "error",
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "folder": str(folder),
+                }
+            )
+
+    ok = sum(1 for r in results if r["status"] == "ok")
+    skipped = sum(1 for r in results if r["status"] == "skipped")
+    failed = sum(1 for r in results if r["status"] == "error")
+    log(f"[fetch] Hoàn tất: {ok} thành công, {skipped} đã tải trước đó, {failed} lỗi.")
+    return {
+        "total": len(entries),
+        "ok": ok,
+        "skipped": skipped,
+        "failed": failed,
+        "results": results,
+    }
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Tải video của khung 'giờ trôi qua' từ Surveillance Station cho "
+            "mọi camera khai báo trong watch_folders.csv."
+        )
+    )
+    parser.add_argument(
+        "csv",
+        nargs="?",
+        default="watch_folders.csv",
+        help="Tệp CSV (cột folder,config; mặc định: watch_folders.csv).",
+    )
+    parser.add_argument(
+        "--at",
+        default=None,
+        metavar='"YYYY-MM-DD HH:MM"',
+        help="Mô phỏng thời điểm chạy để kiểm thử (mặc định: bây giờ).",
+    )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Chạy trình duyệt ẩn, không mở cửa sổ Edge.",
+    )
+    parser.add_argument(
+        "--state",
+        default=None,
+        help=f"Tệp trạng thái đã tải (mặc định: outputs/{FETCH_STATE_NAME}).",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+    now = None
+    if args.at:
+        try:
+            now = datetime.strptime(args.at, "%Y-%m-%d %H:%M")
+        except ValueError:
+            print(f"--at cần định dạng 'YYYY-MM-DD HH:MM', nhận được: {args.at!r}")
+            return 2
+
+    begin_dt, end_dt = previous_hour_window(now)
+    print(f"[fetch] Khung video: {begin_dt:%d/%m/%Y %H:%M} - {end_dt:%H:%M}")
+
+    summary = fetch_all_from_csv(
+        args.csv,
+        begin_dt,
+        end_dt,
+        headless=args.headless,
+        state_path=args.state,
+    )
+    return 0 if summary["failed"] == 0 else 1
+
 
 if __name__ == "__main__":
-    with sync_playwright() as playwright:
-        run(playwright)
+    sys.exit(main())
