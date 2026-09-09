@@ -3,6 +3,7 @@ import json
 import pickle
 import queue
 import threading
+import time
 import traceback
 from collections.abc import Callable
 from pathlib import Path
@@ -209,6 +210,47 @@ def _apply_classifier_filter(
     return filtered
 
 
+PREVIEW_MIN_INTERVAL = 0.1  # min seconds between realtime preview frames (~10 FPS)
+
+
+def _annotate_frame(
+    frame: np.ndarray,
+    frame_idx: int,
+    people: list,
+    frame_data_cache: dict,
+    behaviors: list,
+    zone_active: dict,
+) -> np.ndarray:
+    """Draw every per-frame overlay onto ``frame`` and return it.
+
+    Used both for the exported annotated video (``visualize=True``) and for
+    the realtime GUI preview (``frame_callback``), so both show identical
+    visuals: bounding box + track ID + behavior label, keypoints skeleton,
+    face landmarks and zones (red when active).
+    """
+    for person in people:
+        fd = frame_data_cache.get(frame_idx, {}).get(person.track_id, {})
+        behaviors_data = fd.get("behaviors", {})
+        active_behavior_name = ""
+        for bname, bdata in behaviors_data.items():
+            if bdata.get("detected"):
+                active_behavior_name = bname
+                break
+        frame = draw_skeleton(
+            frame, person.keypoints, person.bbox, person.track_id,
+            bool(active_behavior_name), active_behavior_name,
+        )
+        frame = draw_face_landmarks(
+            frame, person.face_data, person.bbox, frame.shape[:2],
+        )
+    for behavior in behaviors:
+        if hasattr(behavior, 'zones') and behavior.zones:
+            for z in behavior.zones:
+                is_active = zone_active.get(z.name, False)
+                frame = draw_zone(frame, z, is_active)
+    return frame
+
+
 def _reader_worker(cap, read_queue, total_frames, crop_region):
     for frame_idx in range(total_frames):
         try:
@@ -339,6 +381,7 @@ def run_pipeline(
     config_path: str | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
     log_callback: Callable[[str], None] | None = None,
+    frame_callback: Callable[[int, np.ndarray, dict], None] | None = None,
 ):
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -452,6 +495,8 @@ def run_pipeline(
     reader.start()
     inference.start()
 
+    next_preview_t = 0.0  # monotonic-time gate for the realtime preview emission
+
     try:
         progress = tqdm(total=total_frames, desc="Processing frames") if log_callback is None else None
         if log_callback:
@@ -511,40 +556,45 @@ def run_pipeline(
                 progress_callback(frame_idx + 1, total_frames)
 
             # --- annotate and write output video for every frame ---
-            if visualize:
+            if visualize or frame_callback is not None:
                 try:
-                    for person in people:
-                        fd = frame_data_cache.get(frame_idx, {}).get(person.track_id, {})
-                        behaviors_data = fd.get("behaviors", {})
-                        active_behavior_name = ""
-                        for bname, bdata in behaviors_data.items():
-                            if bdata.get("detected"):
-                                active_behavior_name = bname
-                                break
-                        frame = draw_skeleton(
-                            frame, person.keypoints, person.bbox, person.track_id,
-                            bool(active_behavior_name), active_behavior_name,
-                        )
-                        frame = draw_face_landmarks(
-                            frame, person.face_data, person.bbox, frame.shape[:2],
-                        )
-                    for behavior in behaviors:
-                        if hasattr(behavior, 'zones') and behavior.zones:
-                            for z in behavior.zones:
-                                is_active = zone_active.get(z.name, False)
-                                frame = draw_zone(frame, z, is_active)
-                    # write once per frame after all annotations are done
-                    if writer is not None and writer.isOpened():
-                        if frame.size == 0:
-                            continue
-                        if frame.shape[1] != writer_size[0] or frame.shape[0] != writer_size[1]:
-                            frame = cv2.resize(frame, writer_size)
-                        writer.write(frame)
+                    frame = _annotate_frame(
+                        frame, frame_idx, people, frame_data_cache, behaviors, zone_active
+                    )
+                    if visualize:
+                        # write once per frame after all annotations are done
+                        if writer is not None and writer.isOpened():
+                            if frame.size == 0:
+                                continue
+                            if frame.shape[1] != writer_size[0] or frame.shape[0] != writer_size[1]:
+                                frame = cv2.resize(frame, writer_size)
+                            writer.write(frame)
                 except Exception as e:
                     if log_callback:
                         log_callback(f"  Visualization error at frame {frame_idx}: {e}")
                     else:
                         print(f"  Visualization error at frame {frame_idx}: {e}", flush=True)
+
+            # --- realtime preview: push the annotated frame to the GUI ---
+            # Emission is time-throttled so the Qt queued connection is not
+            # flooded; the last frame is always emitted. A new RGB buffer is
+            # created (cvtColor) so the GUI can safely keep it around.
+            if frame_callback is not None and frame.size != 0:
+                now = time.monotonic()
+                if now >= next_preview_t or frame_idx + 1 >= total_frames:
+                    next_preview_t = now + PREVIEW_MIN_INTERVAL
+                    try:
+                        preview_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        frame_callback(
+                            frame_idx,
+                            preview_rgb,
+                            {"people": len(people), "events": event_counter},
+                        )
+                    except Exception as e:
+                        if log_callback:
+                            log_callback(f"  Preview error at frame {frame_idx}: {e}")
+                        else:
+                            print(f"  Preview error at frame {frame_idx}: {e}", flush=True)
 
         if progress is not None:
             progress.close()

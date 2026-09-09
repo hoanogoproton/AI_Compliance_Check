@@ -10,6 +10,7 @@ class WatchWorker(QObject):
     """Runs WatchRunner in a daemon thread, bridging its event dicts to Qt."""
 
     event = Signal(dict)
+    frame_ready = Signal(str, int, object, dict)
     finished = Signal(int)
 
     def __init__(self):
@@ -18,6 +19,15 @@ class WatchWorker(QObject):
         self._runner: WatchRunner | None = None
 
     def start(self, **runner_kwargs) -> None:
+        # Bridge realtime preview frames emitted by run_pipeline to the GUI
+        # thread (auto queued connection). The window decides whether to
+        # render them, so this stays cheap even when the preview is off.
+        runner_kwargs.setdefault(
+            "frame_callback",
+            lambda key, frame_idx, frame_rgb, info: self.frame_ready.emit(
+                key, frame_idx, frame_rgb, info
+            ),
+        )
         self._thread = threading.Thread(
             target=self._run, kwargs=runner_kwargs, daemon=True
         )

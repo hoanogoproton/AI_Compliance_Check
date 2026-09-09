@@ -1,13 +1,16 @@
 """Realtime Vietnamese GUI for the folder watcher (watch_folders.py).
 
-Shows a live status table (one row per video), per-video progress bars, a
-timestamped log panel and Start/Stop controls. The watcher runs in a daemon
-thread owned by ``WatchWorker``; its event dicts arrive here via a queued Qt
-signal, so every handler below runs on the GUI thread.
+Shows a live status table (one row per video), per-video progress bars, an
+annotated realtime video preview (bounding boxes, keypoints, face landmarks,
+zones) of the video currently being processed, a timestamped log panel and
+Start/Stop controls. The watcher runs in a daemon thread owned by
+``WatchWorker``; its event dicts and preview frames arrive here via queued Qt
+signals, so every handler below runs on the GUI thread.
 """
 
 from __future__ import annotations
 
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -35,6 +38,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui.workers.watch_worker import WatchWorker
+from gui.widgets.live_preview import LivePreviewWidget
 from watch_folders import load_watch_csv
 
 DEFAULT_CSV = "watch_folders.csv"
@@ -70,6 +74,9 @@ class WatchWindow(QMainWindow):
         self._bars: dict[str, QProgressBar] = {}
         self._counts = {"processed": 0, "deleted": 0, "failed": 0}
         self._close_after_stop = False
+        self._current_video: str | None = None   # name of the video in progress
+        self._last_frame_t: float | None = None  # monotonic ts of last preview frame
+        self._ema_frame_dt: float | None = None  # smoothed preview frame interval (s)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -109,6 +116,14 @@ class WatchWindow(QMainWindow):
         self.visualize_check = QCheckBox("Xuất video chú thích")
         self.visualize_check.setChecked(True)
         row1.addWidget(self.visualize_check)
+
+        self.preview_check = QCheckBox("Xem trước realtime")
+        self.preview_check.setChecked(True)
+        self.preview_check.setToolTip(
+            "Hiển thị video đang xử lý kèm bounding box, keypoint, zone…\n"
+            "Có thể bật/tắt ngay cả khi đang chạy."
+        )
+        row1.addWidget(self.preview_check)
         root.addLayout(row1)
 
         row2 = QHBoxLayout()
@@ -134,8 +149,22 @@ class WatchWindow(QMainWindow):
         row2.addWidget(self.start_btn)
         root.addLayout(row2)
 
-        # -- table + log -------------------------------------------------------
+        # -- preview + table + log ---------------------------------------------
         splitter = QSplitter(Qt.Vertical)
+
+        preview_group = QGroupBox("Xem trước — video đang xử lý")
+        preview_layout = QVBoxLayout()
+        caption_row = QHBoxLayout()
+        self.preview_caption = QLabel("Chưa có video đang xử lý")
+        self.preview_caption.setObjectName("Subtitle")
+        caption_row.addWidget(self.preview_caption, 1)
+        self.preview_fps_label = QLabel("")
+        caption_row.addWidget(self.preview_fps_label)
+        preview_layout.addLayout(caption_row)
+        self.preview = LivePreviewWidget()
+        preview_layout.addWidget(self.preview, 1)
+        preview_group.setLayout(preview_layout)
+        splitter.addWidget(preview_group)
 
         self.table = QTableWidget()
         self.table.setColumnCount(7)
@@ -170,8 +199,9 @@ class WatchWindow(QMainWindow):
         splitter.addWidget(log_group)
 
         splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([430, 190])
+        splitter.setStretchFactor(1, 4)
+        splitter.setStretchFactor(2, 2)
+        splitter.setSizes([300, 360, 170])
         root.addWidget(splitter, 1)
 
         self._update_summary()
@@ -209,11 +239,13 @@ class WatchWindow(QMainWindow):
         self.log_area.clear()
         self._update_summary()
 
+        self._reset_preview()
         self._set_running(True)
         self._append_log("Đang khởi động trình theo dõi...")
 
         self._worker = WatchWorker()
         self._worker.event.connect(self._on_event)
+        self._worker.frame_ready.connect(self._on_frame_ready)
         self._worker.finished.connect(self._on_finished)
         self._worker.start(
             csv_path=csv_path,
@@ -287,6 +319,8 @@ class WatchWindow(QMainWindow):
                 ev["key"], ev.get("video_name", ""), ev.get("folder", ""), ev.get("config", "")
             )
             self._set_cell(row, COL_STATUS, ST_PROCESSING)
+            self._current_video = ev.get("video_name", "")
+            self.preview_caption.setText(f"{self._current_video} — đang xử lý…")
         elif etype == "video_progress":
             key = ev["key"]
             row = self._row_for(key, ev.get("video_name", ""))
@@ -298,6 +332,8 @@ class WatchWindow(QMainWindow):
         elif etype == "video_done":
             key = ev["key"]
             row = self._row_for(key, ev.get("video_name", ""))
+            self._current_video = None
+            self.preview_caption.setText(f"{ev.get('video_name', '')} — hoàn tất")
             deleted = bool(ev.get("deleted"))
             if deleted:
                 self._set_cell(row, COL_STATUS, ST_DONE)
@@ -317,6 +353,8 @@ class WatchWindow(QMainWindow):
         elif etype == "video_error":
             key = ev["key"]
             row = self._row_for(key, ev.get("video_name", ""))
+            self._current_video = None
+            self.preview_caption.setText(f"{ev.get('video_name', '')} — lỗi")
             self._set_cell(row, COL_STATUS, ST_ERROR)
             gave_up = bool(ev.get("gave_up"))
             attempt = (
@@ -335,6 +373,45 @@ class WatchWindow(QMainWindow):
                 "failed": ev.get("failed", 0),
             }
             self._update_summary()
+
+    # -- realtime preview ------------------------------------------------------
+
+    def _on_frame_ready(self, key: str, frame_idx: int, frame_rgb, info: dict):
+        """Render one annotated frame pushed by the pipeline (GUI thread)."""
+        if not self.preview_check.isChecked():
+            self._last_frame_t = None  # restart FPS smoothing when re-enabled
+            return
+        now = time.monotonic()
+        if self._last_frame_t is not None:
+            dt = now - self._last_frame_t
+            if dt > 0:
+                self._ema_frame_dt = (
+                    dt if self._ema_frame_dt is None
+                    else 0.7 * self._ema_frame_dt + 0.3 * dt
+                )
+        self._last_frame_t = now
+        self.preview.set_frame(frame_rgb)
+
+        caption = f"{self._current_video or 'Đang xử lý'} — Frame {frame_idx + 1}"
+        people = info.get("people")
+        events = info.get("events")
+        if people is not None:
+            caption += f" • Người: {people}"
+        if events is not None:
+            caption += f" • Sự kiện: {events}"
+        self.preview_caption.setText(caption)
+        if self._ema_frame_dt:
+            self.preview_fps_label.setText(f"{1.0 / self._ema_frame_dt:.1f} FPS")
+        else:
+            self.preview_fps_label.setText("")
+
+    def _reset_preview(self):
+        self._current_video = None
+        self._last_frame_t = None
+        self._ema_frame_dt = None
+        self.preview.clear("Chưa có video đang xử lý")
+        self.preview_caption.setText("Chưa có video đang xử lý")
+        self.preview_fps_label.setText("")
 
     # -- table / log helpers -------------------------------------------------
 

@@ -205,6 +205,7 @@ class WatchRunner:
         max_retries: int = DEFAULT_MAX_RETRIES,
         pipeline_fn=None,
         event_callback: Callable[[dict], None] | None = None,
+        frame_callback: Callable | None = None,
     ):
         self.csv_path = Path(csv_path)
         self.poll_interval = max(0.1, float(poll_interval))
@@ -229,6 +230,9 @@ class WatchRunner:
         # loading can be mistaken for a pre-existing video.
         self._pipeline = pipeline_fn  # imported on first use when None
         self.event_callback = event_callback
+        # Optional realtime preview bridge called as (key, frame_idx, rgb, info)
+        # with `key` being the canonical path of the video being processed.
+        self.frame_callback = frame_callback
 
         self.entries: list[dict] = []
         self.known_folders: set[str] = set()
@@ -456,6 +460,15 @@ class WatchRunner:
 
                     extra_kwargs["progress_callback"] = on_progress
                     extra_kwargs["log_callback"] = self._log
+                if self.frame_callback is not None:
+                    def on_frame(
+                        frame_idx: int, frame_rgb, info: dict, _key: str = key
+                    ) -> None:
+                        # Bind the video key so the GUI knows which video the
+                        # realtime preview frame belongs to.
+                        self.frame_callback(_key, frame_idx, frame_rgb, info)
+
+                    extra_kwargs["frame_callback"] = on_frame
                 self._pipeline(
                     video_path=str(video.resolve()),
                     model_path=self.model_path,

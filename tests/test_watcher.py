@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 import watch_folders as wf
@@ -448,3 +449,39 @@ def test_event_callback_none_keeps_cli_behavior(tmp_path):
     assert "progress_callback" not in received_kwargs[0]
     assert "log_callback" not in received_kwargs[0]
     assert runner.journal["processed"][0]["deleted"] is True
+    assert "frame_callback" not in received_kwargs[0]
+
+
+def test_frame_callback_wired_in_gui_mode(tmp_path):
+    """GUI mode: the preview callback is passed through and bound to the key."""
+    calls = []
+    received = []
+
+    def fn(video_path, output_dir, frame_callback=None, **kwargs):
+        assert frame_callback is not None
+        frame_callback(
+            0, np.zeros((2, 2, 3), dtype=np.uint8), {"people": 1, "events": 0}
+        )
+        calls.append(video_path)
+        out = Path(output_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        stem = Path(video_path).stem
+        (out / f"{stem}_metadata.json").write_text(
+            json.dumps({"events": []}), encoding="utf-8"
+        )
+
+    runner, folder, cfg = _make_runner(
+        tmp_path, fn, event_callback=lambda e: None,
+        frame_callback=lambda *a: received.append(a),
+    )
+    runner.run_cycle()                     # folder first seen (empty)
+    (folder / "v.mp4").write_bytes(b"v" * 50)
+    runner.run_cycle()                     # sighting (not stable yet)
+    runner.run_cycle()                     # stable -> queued and processed
+    assert len(calls) == 1
+    assert len(received) == 1
+    key, frame_idx, rgb, info = received[0]
+    assert key == wf.canonical(folder / "v.mp4")
+    assert frame_idx == 0
+    assert rgb.shape == (2, 2, 3)
+    assert info == {"people": 1, "events": 0}
