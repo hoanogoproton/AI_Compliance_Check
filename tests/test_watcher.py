@@ -25,7 +25,28 @@ def _fake_pipeline_ok(calls):
     return fn
 
 
-def _make_runner(tmp_path, pipeline_fn):
+def _fake_pipeline_progress(calls, total=1000):
+    """Fake pipeline that reports per-frame progress and logs one line."""
+
+    def fn(video_path, output_dir, progress_callback=None, log_callback=None, **kwargs):
+        calls.append(video_path)
+        if log_callback:
+            log_callback("fake pipeline log line")
+        for frame in range(1, total + 1):
+            if progress_callback:
+                progress_callback(frame, total)
+        out = Path(output_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        stem = Path(video_path).stem
+        (out / f"{stem}_metadata.json").write_text(
+            json.dumps({"events": [{"id": 1}, {"id": 2}]}),
+            encoding="utf-8",
+        )
+
+    return fn
+
+
+def _make_runner(tmp_path, pipeline_fn, **runner_kwargs):
     cfg = tmp_path / "cfg.yaml"
     cfg.write_text("behaviors: []\n", encoding="utf-8")
     folder = tmp_path / "drop"
@@ -38,6 +59,7 @@ def _make_runner(tmp_path, pipeline_fn):
         output_dir=tmp_path / "out",
         journal_path=tmp_path / "state.json",
         pipeline_fn=pipeline_fn,
+        **runner_kwargs,
     )
     return runner, folder, cfg
 
@@ -274,3 +296,155 @@ def test_csv_reload_picks_up_new_folder(tmp_path):
     runner.run_cycle()  # processed
     assert len(calls) == 1
     assert calls[0].endswith("v2.mp4")
+
+
+# --------------------------------------------------------------------------
+# Event callback (GUI realtime feed)
+# --------------------------------------------------------------------------
+
+def test_events_for_successful_video(tmp_path):
+    calls = []
+    events = []
+    runner, folder, cfg = _make_runner(
+        tmp_path, _fake_pipeline_progress(calls), event_callback=events.append
+    )
+    runner.run_cycle()                     # startup scan: folder first seen, empty
+    (folder / "new.mp4").write_bytes(b"v" * 50)
+    runner.run_cycle()                     # first sighting: not stable yet
+    runner.run_cycle()                     # stable -> processed
+    runner._print_summary()                # emits the final `stopped` event
+
+    types = [e["type"] for e in events]
+    assert "folder_seen" in types
+    assert any(e["type"] == "log" and "PROCESSING" in e["message"] for e in events)
+    assert types.index("video_new") < types.index("video_start")
+    assert types.index("video_start") < types.index("video_done")
+    assert types.index("video_done") < types.index("stopped")
+
+    folder_seen = events[types.index("folder_seen")]
+    assert folder_seen["ignored"] == 0
+
+    new_ev = events[types.index("video_new")]
+    assert new_ev["video_name"] == "new.mp4"
+    assert new_ev["folder"] == str(folder)
+    assert new_ev["config"] == str(cfg)
+    assert new_ev["key"] == wf.canonical(folder / "new.mp4")
+
+    # progress events: throttled to ~1% steps, last one reports completion
+    start = types.index("video_start")
+    done = types.index("video_done")
+    progress = [e for e in events[start:done] if e["type"] == "video_progress"]
+    assert progress, "expected progress events between start and done"
+    assert len(progress) <= 105
+    assert progress[-1]["frame"] == progress[-1]["total"] == 1000
+    assert all(e["key"] == new_ev["key"] for e in progress)
+
+    # the pipeline received the log callback and its message was mirrored
+    assert any(
+        e["type"] == "log" and "fake pipeline log line" in e["message"]
+        for e in events
+    )
+
+    done_ev = events[done]
+    assert done_ev["events"] == 2
+    assert done_ev["deleted"] is True
+
+    stopped = events[-1]
+    assert stopped["type"] == "stopped"
+    assert stopped["processed"] == 1
+    assert stopped["deleted"] == 1
+    assert stopped["failed"] == 0
+
+
+def test_folder_seen_event_lists_ignored_videos(tmp_path):
+    events = []
+    runner, folder, cfg = _make_runner(
+        tmp_path, _fake_pipeline_ok([]), event_callback=events.append
+    )
+    (folder / "old.mp4").write_bytes(b"x" * 10)
+    runner.run_cycle()
+    folder_seen = [e for e in events if e["type"] == "folder_seen"][0]
+    assert folder_seen["ignored"] == 1
+    assert folder_seen["videos"] == ["old.mp4"]
+
+
+def test_startup_and_stopped_events(tmp_path):
+    events = []
+    runner, folder, cfg = _make_runner(
+        tmp_path, _fake_pipeline_ok([]), event_callback=events.append, max_cycles=0
+    )
+    (folder / "old.mp4").write_bytes(b"x" * 10)
+    runner.run()  # no poll cycles: just startup + summary
+    types = [e["type"] for e in events]
+    assert "startup" in types
+    assert types[-1] == "stopped"
+    startup = events[types.index("startup")]
+    assert startup["csv_path"] == str(runner.csv_path)
+    assert startup["poll_interval"] == runner.poll_interval > 0
+    assert startup["visualize"] is True
+    assert events[-1]["processed"] == 0
+    assert events[-1]["deleted"] == 0
+    assert events[-1]["failed"] == 0
+
+
+def test_events_for_failing_video(tmp_path):
+    events = []
+    calls = []
+
+    def failing(video_path, output_dir, **kwargs):
+        calls.append(video_path)
+        raise RuntimeError("boom")
+
+    runner, folder, cfg = _make_runner(
+        tmp_path, failing, event_callback=events.append
+    )
+    runner.run_cycle()                     # startup scan: folder empty
+    (folder / "bad.mp4").write_bytes(b"v" * 50)
+    runner.run_cycle()                     # sighting
+    runner.run_cycle()                     # attempt 1 -> kept, will retry
+    runner.run_cycle()                     # attempt 2 -> gave up
+    runner._print_summary()
+
+    errors = [e for e in events if e["type"] == "video_error"]
+    assert len(errors) == 2
+    assert errors[0]["attempts"] == 1
+    assert errors[0]["gave_up"] is False
+    assert errors[0]["max_retries"] == 2
+    assert errors[1]["attempts"] == 2
+    assert errors[1]["gave_up"] is True
+    assert "boom" in errors[1]["error"]
+    assert all(e["video_name"] == "bad.mp4" for e in errors)
+    assert all(e["key"] == wf.canonical(folder / "bad.mp4") for e in errors)
+
+    stopped = events[-1]
+    assert stopped["type"] == "stopped"
+    assert stopped["processed"] == 0
+    assert stopped["failed"] == 1
+    assert len(calls) == 2  # retried once before giving up
+
+
+def test_event_callback_none_keeps_cli_behavior(tmp_path):
+    calls = []
+    received_kwargs = []
+
+    def fn(video_path, output_dir, **kwargs):
+        calls.append(video_path)
+        received_kwargs.append(kwargs)
+        out = Path(output_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        stem = Path(video_path).stem
+        (out / f"{stem}_metadata.json").write_text(
+            json.dumps({"events": []}), encoding="utf-8"
+        )
+
+    runner, folder, cfg = _make_runner(tmp_path, fn)
+    assert runner.event_callback is None
+    runner.run_cycle()
+    (folder / "x.mp4").write_bytes(b"v" * 50)
+    runner.run_cycle()
+    runner.run_cycle()
+    assert len(calls) == 1
+    # CLI path: no GUI callbacks are wired into run_pipeline (tqdm stays as-is)
+    assert "progress_callback" not in received_kwargs[0]
+    assert "log_callback" not in received_kwargs[0]
+    assert runner.journal["processed"][0]["deleted"] is True

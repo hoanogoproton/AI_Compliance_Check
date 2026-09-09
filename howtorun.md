@@ -135,3 +135,7 @@ Cách dùng:
 Build lại khi cần: powershell -ExecutionPolicy Bypass -File packaging\build_exe.ps1
 Kết quả: thư mục dist\HandHeadGUI\ (~1.24 GB) chứa HandHeadGUI.exe + _internal\ + config\, models\, yolo*.pt
 Copy cho khách: zip cả thư mục dist\HandHeadGUI → khách giải nén và double-click HandHeadGUI.exe. Không cần cài Python hay internet.
+
+python -m playwright codegen http://172.17.108.208:116/
+
+python -m gui.watch_app, python gui/watch_app.py

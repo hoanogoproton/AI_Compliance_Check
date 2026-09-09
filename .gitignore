@@ -19,6 +19,7 @@ dataset/
 
 # Project output / generated data
 outputs/
+output_old/
 images/
 videos/
 plans/

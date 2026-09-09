@@ -10,7 +10,7 @@ model:
 output:
   dir: ./outputs/CA927-FB-RAI7-No3-20260822-093621_P2
   visualize: true
-  context_seconds: 2
+  context_seconds: 5
   crop_padding: 10
   debug_keypoints: true
 zones:
@@ -97,7 +97,7 @@ behaviors:
     max_gap_frames: 1
     min_event_frames: 3
 - name: head_turn
-  enabled: true
+  enabled: false
   params:
     turn_threshold_ratio: 0.3
     window_frames: 21
@@ -120,7 +120,7 @@ behaviors:
     max_gap_frames: 3
     min_event_frames: 7
 - name: body_turn
-  enabled: true
+  enabled: false
   params:
     min_angle: 70.0
     window_seconds: 2.0

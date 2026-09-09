@@ -10,7 +10,7 @@ model:
 output:
   dir: ./outputs/CA857-FB-RAI3-No1-20260821-133623
   visualize: true
-  context_seconds: 2
+  context_seconds: 5
   crop_padding: 10
   debug_keypoints: true
 zones:
@@ -109,7 +109,7 @@ behaviors:
     min_displacement_ratio: 0.01
     keypoint_conf_threshold: 0.3
 - name: body_turn
-  enabled: true
+  enabled: false
   params:
     min_angle: 30.0
     window_seconds: 2.0

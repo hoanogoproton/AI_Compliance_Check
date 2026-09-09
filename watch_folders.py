@@ -37,6 +37,7 @@ import sys
 import threading
 import time
 from collections import deque
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
@@ -178,7 +179,14 @@ def count_events(output_dir: str | Path, video_stem: str) -> int | None:
 
 
 class WatchRunner:
-    """Polls the folders from the CSV and processes every new video."""
+    """Polls the folders from the CSV and processes every new video.
+
+    An optional ``event_callback`` (used by the realtime GUI) receives a dict
+    per lifecycle event (``startup``, ``folder_seen``, ``video_new``,
+    ``video_start``, ``video_progress``, ``video_done``, ``video_error``,
+    ``log``, ``stopped``). When it is ``None`` (CLI) nothing is emitted and
+    behavior is unchanged.
+    """
 
     def __init__(
         self,
@@ -196,6 +204,7 @@ class WatchRunner:
         max_cycles: int | None = None,
         max_retries: int = DEFAULT_MAX_RETRIES,
         pipeline_fn=None,
+        event_callback: Callable[[dict], None] | None = None,
     ):
         self.csv_path = Path(csv_path)
         self.poll_interval = max(0.1, float(poll_interval))
@@ -219,6 +228,7 @@ class WatchRunner:
         # startup snapshot runs immediately and no file dropped during model
         # loading can be mistaken for a pre-existing video.
         self._pipeline = pipeline_fn  # imported on first use when None
+        self.event_callback = event_callback
 
         self.entries: list[dict] = []
         self.known_folders: set[str] = set()
@@ -238,6 +248,23 @@ class WatchRunner:
     def stop(self) -> None:
         self._stop.set()
 
+    # -- event callback ------------------------------------------------------
+
+    def _emit(self, event_type: str, **fields) -> None:
+        """Forward a lifecycle event to the GUI callback (best effort)."""
+        if self.event_callback is None:
+            return
+        try:
+            self.event_callback({"type": event_type, **fields})
+        except Exception as e:  # noqa: BLE001 — a dead GUI must not kill the watcher
+            self.event_callback = None
+            _log(f"WARNING: event callback disabled after error: {e}")
+
+    def _log(self, message: str) -> None:
+        """Log to stdout like the CLI and mirror the message to the GUI."""
+        _log(message)
+        self._emit("log", message=message)
+
     # -- CSV / entries ------------------------------------------------------
 
     def _load_entries(self) -> list[dict]:
@@ -246,14 +273,14 @@ class WatchRunner:
             warn_key = f"csv:{err}"
             if warn_key not in self.warned:
                 self.warned.add(warn_key)
-                _log(f"CSV ERROR: {err}")
+                self._log(f"CSV ERROR: {err}")
         valid: list[dict] = []
         for entry in entries:
             if not entry["config"].exists():
                 warn_key = f"cfg:{canonical(entry['config'])}"
                 if warn_key not in self.warned:
                     self.warned.add(warn_key)
-                    _log(
+                    self._log(
                         f"ERROR: config not found for folder "
                         f"'{entry['folder_raw']}': {entry['config']}"
                     )
@@ -262,7 +289,7 @@ class WatchRunner:
                 warn_key = f"dir:{canonical(entry['folder'])}"
                 if warn_key not in self.warned:
                     self.warned.add(warn_key)
-                    _log(
+                    self._log(
                         f"WARNING: folder does not exist yet (will keep polling): "
                         f"{entry['folder']}"
                     )
@@ -283,7 +310,7 @@ class WatchRunner:
         try:
             children = sorted(folder.iterdir())
         except OSError as e:
-            _log(f"WARNING: cannot read folder {folder}: {e}")
+            self._log(f"WARNING: cannot read folder {folder}: {e}")
             return []
         videos: list[Path] = []
         for child in children:
@@ -318,16 +345,24 @@ class WatchRunner:
                 # First time the folder is visible: ignore whatever is already
                 # in it — only videos that appear afterwards are processed.
                 self.known_folders.add(folder_key)
+                ignored_names = [v.name for v in videos]
                 if videos:
                     self.snapshot.update(canonical(v) for v in videos)
                     self.journal.setdefault("ignored_initial", {})[str(folder)] = [
                         v.name for v in videos
                     ]
                     save_journal(self.journal_path, self.journal)
-                    _log(
+                    self._log(
                         f"Folder first seen: {folder} - "
                         f"{len(videos)} existing video(s) will be IGNORED."
                     )
+                self._emit(
+                    "folder_seen",
+                    folder=str(folder),
+                    folder_raw=entry["folder_raw"],
+                    ignored=len(ignored_names),
+                    videos=ignored_names,
+                )
             for video in videos:
                 self._maybe_enqueue(video, entry)
 
@@ -357,15 +392,25 @@ class WatchRunner:
             return  # never re-ingest our own exported clips
         if not is_file_stable(video, self.last_sizes):
             return  # first sighting or file still being copied
-        _log(f"NEW video: {video}")
-        self.queue.append({
+        item = {
             "video": video,
             "config": entry["config"],
             "config_raw": entry["config_raw"],
             "folder_raw": entry["folder_raw"],
             "output_dir": self._output_dir_for(entry, video),
             "key": key,
-        })
+        }
+        self._log(f"NEW video: {video}")
+        self._emit(
+            "video_new",
+            key=key,
+            video=str(video),
+            video_name=video.name,
+            folder=entry["folder_raw"],
+            config=entry["config_raw"],
+            output_dir=str(item["output_dir"]),
+        )
+        self.queue.append(item)
         self.queued_keys.add(key)
 
 
@@ -383,8 +428,34 @@ class WatchRunner:
 
                 self._pipeline = run_pipeline
             try:
-                _log(f"PROCESSING: {video.name} (config: {item['config_raw']})")
-                _log(f"  output: {item['output_dir']}")
+                self._log(f"PROCESSING: {video.name} (config: {item['config_raw']})")
+                self._log(f"  output: {item['output_dir']}")
+                self._emit(
+                    "video_start",
+                    key=key,
+                    video_name=video.name,
+                    config=item["config_raw"],
+                    output_dir=str(item["output_dir"]),
+                )
+                extra_kwargs: dict = {}
+                if self.event_callback is not None:
+                    def on_progress(
+                        frame: int, total: int, _key: str = key, _name: str = video.name
+                    ) -> None:
+                        # Throttle to ~1% steps so the GUI is not flooded.
+                        if total <= 0:
+                            return
+                        if frame == total or frame % max(1, total // 100) == 0:
+                            self._emit(
+                                "video_progress",
+                                key=_key,
+                                video_name=_name,
+                                frame=frame,
+                                total=total,
+                            )
+
+                    extra_kwargs["progress_callback"] = on_progress
+                    extra_kwargs["log_callback"] = self._log
                 self._pipeline(
                     video_path=str(video.resolve()),
                     model_path=self.model_path,
@@ -396,10 +467,11 @@ class WatchRunner:
                     crop_padding=self.crop_padding,
                     debug_keypoints=self.debug_keypoints,
                     config_path=str(item["config"]),
+                    **extra_kwargs,
                 )
                 self._on_success(item)
             except KeyboardInterrupt:
-                _log(f"INTERRUPTED while processing {video.name} - video kept on disk.")
+                self._log(f"INTERRUPTED while processing {video.name} - video kept on disk.")
                 raise
             except Exception as e:  # noqa: BLE001 — one bad video must not stop the watcher
                 self._on_error(item, e)
@@ -419,7 +491,7 @@ class WatchRunner:
             delete_error = str(e)
         if deleted:
             self.last_sizes.pop(key, None)
-            _log(
+            self._log(
                 f"DONE: {video.name} - "
                 f"{events if events is not None else '?'} event(s); original deleted."
             )
@@ -427,7 +499,7 @@ class WatchRunner:
             # Keep the processed video out of future scans so it is not
             # re-processed endlessly when deletion fails (e.g. file locked).
             self.snapshot.add(key)
-            _log(f"DONE: {video.name} but could NOT delete it: {delete_error}")
+            self._log(f"DONE: {video.name} but could NOT delete it: {delete_error}")
         self.stats["processed"] += 1
         if deleted:
             self.stats["deleted"] += 1
@@ -442,6 +514,14 @@ class WatchRunner:
             "finished_at": _now(),
         })
         save_journal(self.journal_path, self.journal)
+        self._emit(
+            "video_done",
+            key=key,
+            video_name=video.name,
+            events=events,
+            deleted=deleted,
+            delete_error=delete_error,
+        )
 
     def _on_error(self, item: dict, exc: Exception) -> None:
         video = item["video"]
@@ -452,12 +532,12 @@ class WatchRunner:
         if gave_up:
             self.failed.add(key)
             self.stats["failed"] += 1
-            _log(
+            self._log(
                 f"ERROR: {video.name} failed {attempts} time(s) - giving up, "
                 f"video kept on disk: {exc}"
             )
         else:
-            _log(
+            self._log(
                 f"ERROR: {video.name} (attempt {attempts}/{self.max_retries}) - "
                 f"will retry on the next poll: {exc}"
             )
@@ -468,6 +548,15 @@ class WatchRunner:
             "gave_up": gave_up,
         }
         save_journal(self.journal_path, self.journal)
+        self._emit(
+            "video_error",
+            key=key,
+            video_name=video.name,
+            attempts=attempts,
+            max_retries=self.max_retries,
+            gave_up=gave_up,
+            error=str(exc),
+        )
 
 
     # -- main loop ------------------------------------------------------------
@@ -480,11 +569,24 @@ class WatchRunner:
         self._process_queue()
 
     def run(self) -> int:
-        _log("Folder watcher started.")
-        _log(f"  watch CSV  : {self.csv_path}")
-        _log(f"  poll every : {self.poll_interval:g}s | visualize: {self.visualize}")
-        _log(f"  journal    : {self.journal_path}")
-        _log("Press Ctrl+C to stop.")
+        ignored = sum(
+            len(names) for names in self.journal.get("ignored_initial", {}).values()
+        )
+        self._log("Folder watcher started.")
+        self._log(f"  watch CSV  : {self.csv_path}")
+        self._log(f"  poll every : {self.poll_interval:g}s | visualize: {self.visualize}")
+        self._log(f"  journal    : {self.journal_path}")
+        self._log("Press Ctrl+C to stop.")
+        self._emit(
+            "startup",
+            csv_path=str(self.csv_path),
+            poll_interval=self.poll_interval,
+            visualize=self.visualize,
+            journal_path=str(self.journal_path),
+            journal_processed=len(self.journal.get("processed", [])),
+            journal_errors=len(self.journal.get("errors", {})),
+            ignored_initial=ignored,
+        )
         cycles = 0
         try:
             while not self._stop.is_set():
@@ -494,7 +596,7 @@ class WatchRunner:
                 try:
                     self.run_cycle()
                 except (FileNotFoundError, ValueError) as e:
-                    _log(f"ERROR: {e} - CSV will be retried on the next poll.")
+                    self._log(f"ERROR: {e} - CSV will be retried on the next poll.")
                 cycles += 1
                 if self.max_cycles is not None and cycles >= self.max_cycles:
                     break
@@ -502,7 +604,7 @@ class WatchRunner:
                 if remaining > 0:
                     self._stop.wait(remaining)
         except KeyboardInterrupt:
-            _log("Interrupted by user (Ctrl+C).")
+            self._log("Interrupted by user (Ctrl+C).")
         finally:
             self._print_summary()
         return 0
@@ -511,13 +613,21 @@ class WatchRunner:
         ignored = sum(
             len(names) for names in self.journal.get("ignored_initial", {}).values()
         )
-        _log(
+        self._log(
             "Watcher stopped. "
             f"processed={self.stats['processed']} "
             f"(deleted={self.stats['deleted']}), "
             f"failed={self.stats['failed']}, ignored_existing={ignored}."
         )
-        _log(f"Journal: {self.journal_path}")
+        self._log(f"Journal: {self.journal_path}")
+        self._emit(
+            "stopped",
+            processed=self.stats["processed"],
+            deleted=self.stats["deleted"],
+            failed=self.stats["failed"],
+            ignored=ignored,
+            journal_path=str(self.journal_path),
+        )
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
