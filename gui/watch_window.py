@@ -60,9 +60,13 @@ ST_PROCESSING = "Đang xử lý"
 ST_DONE = "Hoàn tất"
 ST_ERROR = "Lỗi"
 ST_SKIPPED = "Bỏ qua"
+ST_STOPPED = "Đã dừng"
 
 NOTE_IGNORED_INITIAL = "Đã có trong thư mục khi bắt đầu"
 NOTE_DELETE_FAILED = "Không xóa được tệp"
+NOTE_STOPPED_MIDWAY = (
+    "Dừng giữa chừng theo yêu cầu — video giữ lại, sẽ xử lý lại ở lần khởi động kế tiếp"
+)
 
 
 class WatchWindow(QMainWindow):
@@ -286,7 +290,10 @@ class WatchWindow(QMainWindow):
         if self._worker is None:
             return
         self.stop_btn.setEnabled(False)
-        self._append_log("Đã yêu cầu dừng — video hiện tại sẽ chạy xong trước khi thoát.")
+        self._append_log(
+            "Đã yêu cầu dừng — video đang xử lý sẽ bị dừng NGAY và giữ lại trên đĩa "
+            "(sẽ được xử lý tiếp ở lần khởi động kế tiếp)."
+        )
         self._fetch_timer.stop()
         if self._fetch_worker is not None:
             self._fetch_worker.stop()
@@ -492,6 +499,17 @@ class WatchWindow(QMainWindow):
             if gave_up:
                 self._counts["failed"] += 1
                 self._update_summary()
+        elif etype == "video_stopped":
+            key = ev["key"]
+            row = self._row_for(key, ev.get("video_name", ""))
+            self._current_video = None
+            caption = f"{ev.get('video_name', '')} — đã dừng giữa chừng"
+            self.preview.clear(caption)
+            self.preview_caption.setText(caption)
+            self.preview_fps_label.setText("")
+            self._set_cell(row, COL_STATUS, ST_STOPPED)
+            self._set_cell(row, COL_NOTE, NOTE_STOPPED_MIDWAY)
+            self._bars[key].setValue(0)
         elif etype == "stopped":
             self._counts = {
                 "processed": ev.get("processed", 0),
@@ -589,8 +607,9 @@ class WatchWindow(QMainWindow):
             self,
             "Đang chạy",
             "Trình theo dõi đang chạy. Dừng và thoát?\n"
-            "(Video đang xử lý sẽ chạy xong trước khi thoát; tiến trình tải "
-            "video đang chạy sẽ bị ngắt.)",
+            "(Video đang xử lý sẽ bị dừng NGAY và giữ lại trên đĩa — lần khởi "
+            "động kế tiếp nó sẽ được xử lý tiếp; tiến trình tải video đang "
+            "chạy sẽ bị ngắt.)",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )

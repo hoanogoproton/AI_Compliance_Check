@@ -30,6 +30,15 @@ from features import extract_features
 MAX_CACHED_FRAMES = 100000
 
 
+class PipelineAborted(RuntimeError):
+    """Raised when run_pipeline is aborted via ``abort_event`` mid-video.
+
+    Raised instead of returning so the caller can tell an aborted run apart
+    from a completed one: the source video is left untouched on disk and the
+    incomplete annotated video is removed.
+    """
+
+
 def _build_behaviors(config: dict, fps: float | None = None) -> list[BaseBehavior]:
     zones = load_zones(config)
     registry = get_registry()
@@ -251,8 +260,10 @@ def _annotate_frame(
     return frame
 
 
-def _reader_worker(cap, read_queue, total_frames, crop_region):
+def _reader_worker(cap, read_queue, total_frames, crop_region, abort_event=None):
     for frame_idx in range(total_frames):
+        if abort_event is not None and abort_event.is_set():
+            break  # stop requested: read no further frames
         try:
             ret, frame = cap.read()
             if not ret:
@@ -276,10 +287,17 @@ def _reader_worker(cap, read_queue, total_frames, crop_region):
 
 def _inference_worker(
     model, read_queue, write_queue, behaviors, frame_data_cache, conf, iou, fps,
-    classifier_models, face_pipeline,
+    classifier_models, face_pipeline, abort_event=None,
 ):
     while True:
         item = read_queue.get()
+        if abort_event is not None and abort_event.is_set():
+            # Stop requested: discard the remaining frames as fast as possible
+            # so the reader can exit too, then signal EOF downstream.
+            while item is not None:
+                item = read_queue.get()
+            write_queue.put(None)
+            break
         if item is None:
             write_queue.put(None)
             break
@@ -382,6 +400,7 @@ def run_pipeline(
     progress_callback: Callable[[int, int], None] | None = None,
     log_callback: Callable[[str], None] | None = None,
     frame_callback: Callable[[int, np.ndarray, dict], None] | None = None,
+    abort_event: threading.Event | None = None,
 ):
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -483,12 +502,14 @@ def run_pipeline(
     write_queue = queue.Queue(maxsize=30)
 
     reader = threading.Thread(
-        target=_reader_worker, args=(cap, read_queue, total_frames, crop_region), daemon=True
+        target=_reader_worker,
+        args=(cap, read_queue, total_frames, crop_region, abort_event),
+        daemon=True,
     )
     inference = threading.Thread(
         target=_inference_worker,
         args=(model, read_queue, write_queue, behaviors, frame_data_cache, conf, iou, fps,
-              classifier_models, face_pipeline),
+              classifier_models, face_pipeline, abort_event),
         daemon=True,
     )
 
@@ -496,6 +517,7 @@ def run_pipeline(
     inference.start()
 
     next_preview_t = 0.0  # monotonic-time gate for the realtime preview emission
+    aborted = False
 
     try:
         progress = tqdm(total=total_frames, desc="Processing frames") if log_callback is None else None
@@ -506,6 +528,11 @@ def run_pipeline(
         while True:
             item = write_queue.get()
             if item is None:
+                break
+            if abort_event is not None and abort_event.is_set():
+                # Stop requested mid-video: bail out of the frame loop right
+                # now (remaining frames are discarded during the unwind below).
+                aborted = True
                 break
             # Check for error sentinel from inference worker
             if isinstance(item, tuple) and len(item) == 3 and item[0] == "ERROR":
@@ -599,6 +626,33 @@ def run_pipeline(
         if progress is not None:
             progress.close()
 
+        if abort_event is not None and abort_event.is_set():
+            # The EOF sentinel can arrive before the loop's own abort check:
+            # the inference worker drains its queue and signals EOF as soon
+            # as stop is requested, so an early EOF while stopping means the
+            # run was aborted, not completed.
+            aborted = True
+        if aborted:
+            # Unblock the worker threads: both watch the same abort_event,
+            # discard the queued work and signal EOF downstream, so the
+            # queues drain and the threads exit instead of deadlocking.
+            drain_deadline = time.monotonic() + 5.0
+            while time.monotonic() < drain_deadline:
+                try:
+                    item = write_queue.get(timeout=0.5)
+                except queue.Empty:
+                    if not inference.is_alive():
+                        break  # workers already done — nothing left to drain
+                    continue
+                if item is None:
+                    break
+            inference.join(timeout=10.0)
+            reader.join(timeout=10.0)
+            frame_data_cache.clear()
+            raise PipelineAborted(
+                f"Pipeline aborted for {video_path}: stop was requested"
+            )
+
         inference.join()
         reader.join()
 
@@ -641,6 +695,15 @@ def run_pipeline(
         cap.release()
         if writer is not None:
             writer.release()
+            if aborted:
+                # The annotated video is incomplete — remove it (best effort;
+                # it is re-created if the video is processed again).
+                try:
+                    (output_path / f"{video_stem}_annotated_video.mp4").unlink(
+                        missing_ok=True
+                    )
+                except OSError:
+                    pass
 
     write_metadata_files(metadata_events, video_path, output_path, fps, total_frames, video_stem)
 

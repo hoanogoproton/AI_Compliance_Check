@@ -351,6 +351,9 @@ def test_events_for_successful_video(tmp_path):
     assert done_ev["deleted"] is True
 
     stopped = events[-1]
+    if stopped["type"] == "log":
+        # The async results-email thread may log after the summary.
+        stopped = [e for e in events if e["type"] == "stopped"][-1]
     assert stopped["type"] == "stopped"
     assert stopped["processed"] == 1
     assert stopped["deleted"] == 1
@@ -485,3 +488,81 @@ def test_frame_callback_wired_in_gui_mode(tmp_path):
     assert frame_idx == 0
     assert rgb.shape == (2, 2, 3)
     assert info == {"people": 1, "events": 0}
+
+
+def test_stop_aborts_current_video_and_reprocesses_next_start(tmp_path):
+    """Stop must abort the video being processed immediately.
+
+    The unfinished video stays on disk, is journalled as `interrupted`, and a
+    fresh watcher sharing the same journal re-processes it instead of
+    ignoring it like a pre-existing video.
+    """
+    import threading
+    import time
+
+    calls = []
+    events = []
+    entered = threading.Event()
+    seen_abort = {}
+
+    def aborting_fn(video_path, output_dir, abort_event=None, **kwargs):
+        calls.append(video_path)
+        seen_abort["event"] = abort_event
+        entered.set()
+        for _ in range(500):
+            if abort_event is not None and abort_event.is_set():
+                raise RuntimeError("aborted by stop request")
+            time.sleep(0.005)
+
+    def ok_fn(video_path, output_dir, **kwargs):
+        out = Path(output_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        stem = Path(video_path).stem
+        (out / f"{stem}_metadata.json").write_text(
+            json.dumps({"events": []}), encoding="utf-8"
+        )
+
+    runner, folder, cfg = _make_runner(
+        tmp_path, aborting_fn, event_callback=events.append
+    )
+    runner.run_cycle()                     # folder first seen (empty)
+    video = folder / "mid.mp4"
+    video.write_bytes(b"v" * 50)
+    runner.run_cycle()                     # sighting (not stable yet)
+
+    worker = threading.Thread(target=runner.run_cycle)
+    worker.start()
+    assert entered.wait(5.0), "pipeline was never started"
+    runner.stop()
+    worker.join(timeout=10.0)
+    assert not worker.is_alive(), "watcher thread did not stop promptly"
+
+    # Aborted mid-video: kept on disk, not counted as processed nor failed.
+    assert video.exists()
+    assert seen_abort["event"] is runner._stop
+    stopped = [e for e in events if e["type"] == "video_stopped"]
+    assert len(stopped) == 1
+    assert stopped[0]["video_name"] == "mid.mp4"
+    assert stopped[0]["key"] == wf.canonical(video)
+    assert runner.stats["processed"] == 0
+    assert runner.stats["failed"] == 0
+    assert runner.journal["processed"] == []
+    assert wf.canonical(video) in runner.journal.get("interrupted", {})
+
+    # A fresh runner sharing the journal re-processes the interrupted video
+    # (it is NOT ignored like other pre-existing videos) and deletes it.
+    events2 = []
+    runner2 = wf.WatchRunner(
+        csv_path=runner.csv_path,
+        poll_interval=0.01,
+        output_dir=tmp_path / "out",
+        journal_path=tmp_path / "state.json",
+        pipeline_fn=ok_fn,
+        event_callback=events2.append,
+    )
+    runner2.run_cycle()                    # first seen: interrupted NOT ignored
+    runner2.run_cycle()                    # stable -> queued, processed, deleted
+    assert not video.exists()
+    assert any(e["type"] == "video_done" for e in events2)
+    assert wf.canonical(video) not in runner2.journal.get("interrupted", {})
+    assert not any(e["type"] == "video_error" for e in events2)

@@ -19,6 +19,10 @@ Behavior:
       video is kept and retried up to --max-retries times.
     * A journal (default: outputs/watch_state.json) records processed /
       failed / ignored videos for auditing (the originals are deleted).
+    * Stopping the watcher (GUI Stop button) aborts the video being
+      processed immediately; the unfinished video stays on disk, is recorded
+      in the journal as "interrupted" and is re-processed automatically on
+      the next start (it is NOT treated as a pre-existing video).
 
 Usage:
     python watch_folders.py watch_folders.csv
@@ -31,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import inspect
 import json
 import os
 import sys
@@ -40,6 +45,8 @@ from collections import deque
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+
+import email_notifier
 
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".ts"}
 JOURNAL_NAME = "watch_state.json"
@@ -166,16 +173,26 @@ def save_journal(path: str | Path, journal: dict) -> None:
         _log(f"WARNING: could not save journal {path}: {e}")
 
 
-def count_events(output_dir: str | Path, video_stem: str) -> int | None:
-    """Read `<stem>_metadata.json` written by the pipeline and count events."""
+def load_metadata_events(output_dir: str | Path, video_stem: str) -> list[dict] | None:
+    """Read `<stem>_metadata.json` written by the pipeline.
+
+    Returns the list of event dicts, or ``None`` when the file is missing,
+    unreadable, or not a metadata object with an ``events`` list.
+    """
     meta_path = Path(output_dir) / f"{video_stem}_metadata.json"
     try:
         with open(meta_path, encoding="utf-8") as f:
             data = json.load(f)
         events = data.get("events") if isinstance(data, dict) else None
-        return len(events) if isinstance(events, list) else None
+        return events if isinstance(events, list) else None
     except (OSError, json.JSONDecodeError):
         return None
+
+
+def count_events(output_dir: str | Path, video_stem: str) -> int | None:
+    """Read `<stem>_metadata.json` written by the pipeline and count events."""
+    events = load_metadata_events(output_dir, video_stem)
+    return len(events) if events is not None else None
 
 
 class WatchRunner:
@@ -184,8 +201,13 @@ class WatchRunner:
     An optional ``event_callback`` (used by the realtime GUI) receives a dict
     per lifecycle event (``startup``, ``folder_seen``, ``video_new``,
     ``video_start``, ``video_progress``, ``video_done``, ``video_error``,
-    ``log``, ``stopped``). When it is ``None`` (CLI) nothing is emitted and
-    behavior is unchanged.
+    ``video_stopped``, ``log``, ``stopped``). When it is ``None`` (CLI)
+    nothing is emitted and behavior is unchanged.
+
+    When ``stop()`` is requested, the video currently being processed is
+    aborted immediately (the pipeline receives the same ``threading.Event``
+    and checks it between frames); the unfinished video is kept on disk and
+    re-processed on the next start.
     """
 
     def __init__(
@@ -348,17 +370,34 @@ class WatchRunner:
             if folder_key not in self.known_folders:
                 # First time the folder is visible: ignore whatever is already
                 # in it — only videos that appear afterwards are processed.
+                # Exception: videos left unfinished by a previous stop() are
+                # re-processed instead of ignored (see _on_stopped_midway).
                 self.known_folders.add(folder_key)
-                ignored_names = [v.name for v in videos]
-                if videos:
-                    self.snapshot.update(canonical(v) for v in videos)
+                interrupted = self.journal.get("interrupted") or {}
+                # Drop interrupted entries whose files are gone to keep the
+                # journal tidy.
+                stale = [p for p in interrupted if not Path(p).exists()]
+                if stale:
+                    for p in stale:
+                        interrupted.pop(p, None)
+                    save_journal(self.journal_path, self.journal)
+                fresh = [v for v in videos if canonical(v) not in interrupted]
+                ignored_names = [v.name for v in fresh]
+                if fresh:
+                    self.snapshot.update(canonical(v) for v in fresh)
                     self.journal.setdefault("ignored_initial", {})[str(folder)] = [
-                        v.name for v in videos
+                        v.name for v in fresh
                     ]
                     save_journal(self.journal_path, self.journal)
                     self._log(
                         f"Folder first seen: {folder} - "
-                        f"{len(videos)} existing video(s) will be IGNORED."
+                        f"{len(fresh)} existing video(s) will be IGNORED."
+                    )
+                resumed = len(videos) - len(fresh)
+                if resumed:
+                    self._log(
+                        f"Folder first seen: {folder} - {resumed} interrupted "
+                        f"video(s) will be RE-PROCESSED."
                     )
                 self._emit(
                     "folder_seen",
@@ -416,6 +455,11 @@ class WatchRunner:
         )
         self.queue.append(item)
         self.queued_keys.add(key)
+        # The video is queued again — clear its "interrupted" journal entry
+        # (written when a previous stop aborted it mid-processing).
+        interrupted = self.journal.get("interrupted") or {}
+        if interrupted.pop(key, None) is not None:
+            save_journal(self.journal_path, self.journal)
 
 
     # -- processing -----------------------------------------------------------
@@ -442,6 +486,10 @@ class WatchRunner:
                     output_dir=str(item["output_dir"]),
                 )
                 extra_kwargs: dict = {}
+                if self._pipeline_accepts_abort():
+                    # Stop hook: the pipeline checks this Event between frames
+                    # and aborts the video immediately when stop is requested.
+                    extra_kwargs["abort_event"] = self._stop
                 if self.event_callback is not None:
                     def on_progress(
                         frame: int, total: int, _key: str = key, _name: str = video.name
@@ -487,14 +535,21 @@ class WatchRunner:
                 self._log(f"INTERRUPTED while processing {video.name} - video kept on disk.")
                 raise
             except Exception as e:  # noqa: BLE001 — one bad video must not stop the watcher
-                self._on_error(item, e)
+                if self._stop.is_set():
+                    # Stop was requested: the pipeline aborted this video
+                    # mid-way. Not an error — the video is kept on disk and
+                    # re-processed on the next start (see _on_stopped_midway).
+                    self._on_stopped_midway(item)
+                else:
+                    self._on_error(item, e)
             finally:
                 self.processing.discard(key)
 
     def _on_success(self, item: dict) -> None:
         video = item["video"]
         key = item["key"]
-        events = count_events(item["output_dir"], video.stem)
+        events_detail = load_metadata_events(item["output_dir"], video.stem)
+        events = len(events_detail) if events_detail is not None else None
         deleted = False
         delete_error = None
         try:
@@ -527,6 +582,7 @@ class WatchRunner:
             "finished_at": _now(),
         })
         save_journal(self.journal_path, self.journal)
+        self._send_results_email(item, video, events_detail)
         self._emit(
             "video_done",
             key=key,
@@ -535,6 +591,23 @@ class WatchRunner:
             deleted=deleted,
             delete_error=delete_error,
         )
+
+    def _send_results_email(self, item: dict, video: Path, events_detail) -> None:
+        """Email the event list after a successful run (fire-and-forget).
+
+        Skipped when metadata is missing/corrupt or holds zero events; the
+        watcher's success state is never affected by sending.
+        """
+        if not events_detail:
+            return
+        events = [ev for ev in events_detail if isinstance(ev, dict)]
+        if not events:
+            return
+        subject = f"Ket qua xu ly - {video.name}".replace("|", "/")
+        body = email_notifier.build_results_html(
+            video.name, str(item["output_dir"]), events
+        )
+        email_notifier.send_results_email_async(subject, body, log=self._log)
 
     def _on_error(self, item: dict, exc: Exception) -> None:
         video = item["video"]
@@ -570,6 +643,41 @@ class WatchRunner:
             gave_up=gave_up,
             error=str(exc),
         )
+
+    def _pipeline_accepts_abort(self) -> bool:
+        """True when the pipeline callable can consume an ``abort_event`` kwarg."""
+        try:
+            params = inspect.signature(self._pipeline).parameters
+        except (TypeError, ValueError):
+            return False
+        if "abort_event" in params:
+            return True
+        return any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+        )
+
+    def _on_stopped_midway(self, item: dict) -> None:
+        """The pipeline aborted this video because stop was requested.
+
+        The video stays untouched on disk and is recorded in the journal as
+        "interrupted" so the next watcher start re-processes it instead of
+        ignoring it like other pre-existing videos.
+        """
+        video = item["video"]
+        key = item["key"]
+        self.last_sizes.pop(key, None)
+        self.journal.setdefault("interrupted", {})[key] = {
+            "folder": item["folder_raw"],
+            "config": item["config_raw"],
+            "output_dir": str(item["output_dir"]),
+            "stopped_at": _now(),
+        }
+        save_journal(self.journal_path, self.journal)
+        self._log(
+            f"STOPPED: {video.name} - aborted mid-video per stop request; "
+            f"video kept on disk (will be re-processed on the next start)."
+        )
+        self._emit("video_stopped", key=key, video_name=video.name)
 
 
     # -- main loop ------------------------------------------------------------

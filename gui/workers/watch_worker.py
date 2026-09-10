@@ -17,6 +17,7 @@ class WatchWorker(QObject):
         super().__init__()
         self._thread: threading.Thread | None = None
         self._runner: WatchRunner | None = None
+        self._stop_requested = threading.Event()
 
     def start(self, **runner_kwargs) -> None:
         # Bridge realtime preview frames emitted by run_pipeline to the GUI
@@ -37,6 +38,9 @@ class WatchWorker(QObject):
         code = 0
         try:
             self._runner = WatchRunner(event_callback=self.event.emit, **runner_kwargs)
+            if self._stop_requested.is_set():
+                # Stop was requested before the runner even existed.
+                self._runner.stop()
             code = self._runner.run()
         except Exception:
             code = 1
@@ -49,6 +53,7 @@ class WatchWorker(QObject):
             self.finished.emit(code)
 
     def stop(self) -> None:
-        """Ask the runner to stop: the current video finishes first."""
+        """Ask the runner to stop: the current video is aborted immediately."""
+        self._stop_requested.set()
         if self._runner is not None:
             self._runner.stop()
