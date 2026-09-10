@@ -1,4 +1,5 @@
 import json
+import socket
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,8 +27,9 @@ EVENTS = [
 
 
 class _FakeSocket:
-    def __init__(self, response=b"OK"):
+    def __init__(self, response=b"OK", recv_error=None):
         self.response = response
+        self.recv_error = recv_error
         self.sent = b""
 
     def __enter__(self):
@@ -40,6 +42,8 @@ class _FakeSocket:
         self.sent += data
 
     def recv(self, bufsize):
+        if self.recv_error is not None:
+            raise self.recv_error
         return self.response
 
 
@@ -152,8 +156,8 @@ def test_build_results_html_layout():
     assert ">12.4<" in body
     assert ">1.7<" in body
     assert ">2.4<" in body
-    assert "\u2014" in body
-    assert ">2 " in body and "sự kiện" in body
+    assert ">-<" in body
+    assert ">2 " in body and "su kien" in body
 
 
 def test_build_results_html_escapes_and_sanitizes_pipes():
@@ -169,8 +173,105 @@ def test_build_results_html_escapes_and_sanitizes_pipes():
 
 def test_build_results_html_defaults_to_current_time():
     body = email_notifier.build_results_html("v.mp4", "D:/out", [])
-    assert "Thời gian xử lý" in body
+    assert "Thoi gian xu ly" in body
     assert "v.mp4" in body
+
+
+def test_build_results_html_short_list_shows_every_row():
+    events = [
+        {"event_id": i, "behavior": f"be {i}",
+         "start_time_sec": float(i), "end_time_sec": float(i) + 1}
+        for i in range(1, 4)
+    ]
+    body = email_notifier.build_results_html("cam.mp4", "D:/out", events)
+    assert "su kien khac" not in body
+    for i in range(1, 4):
+        assert f"<td>{i}</td>" in body
+
+
+def test_build_results_html_keeps_request_under_service_limit():
+    events = [
+        {"event_id": f"EVT-{i:03d}", "behavior": "Khong deo mu bao hiem",
+         "start_time_sec": float(i), "end_time_sec": float(i) + 2.5}
+        for i in range(1, 201)
+    ]
+    video = "CA442-FB-PC_No2-20260904-081130.mp4"
+    body = email_notifier.build_results_html(
+        video, rf"D:\out\{Path(video).stem}", events
+    )
+    subject = f"Ket qua xu ly - {video}"
+    total = (
+        len(f"[SendEmail_KTTT]{email_notifier.FACTORY}|{subject}|".encode("utf-8"))
+        + len(body.encode("utf-8"))
+    )
+    assert total <= email_notifier.MAX_MESSAGE_BYTES
+    assert "su kien khac" in body
+    assert "EVT-001" in body
+    assert "EVT-200" not in body
+    assert "\n" not in body
+    assert "|" not in body
+
+
+def test_send_email_returns_empty_response_when_service_does_not_reply(
+    monkeypatch,
+):
+    fake = _FakeSocket(recv_error=socket.timeout("timed out"))
+
+    def fake_create_connection(address, timeout=None):
+        return fake
+
+    monkeypatch.setattr(
+        email_notifier,
+        "socket",
+        SimpleNamespace(create_connection=fake_create_connection),
+    )
+    _message, response = email_notifier.send_email("s", "b")
+    assert response == ""
+
+
+def test_send_email_roundtrip_delivers_full_message(monkeypatch):
+    # socketpair: deterministic two-way connection, no listener/accept race,
+    # and the real factory server is never touched.
+    server_side, client_side = socket.socketpair()
+    received = {}
+
+    def fake_create_connection(address, timeout=None):
+        return client_side
+
+    monkeypatch.setattr(
+        email_notifier,
+        "socket",
+        SimpleNamespace(create_connection=fake_create_connection),
+    )
+
+    def _reader():
+        server_side.settimeout(2)
+        chunks = b""
+        try:
+            while not chunks.rstrip().endswith(b"</html>"):
+                part = server_side.recv(65536)
+                if not part:
+                    break
+                chunks += part
+        except OSError:
+            pass
+        received["data"] = chunks
+        server_side.sendall(b"QUEUED")
+
+    thread = threading.Thread(target=_reader)
+    thread.start()
+    body = email_notifier.build_results_html(
+        "roundtrip.mp4", r"D:\out\roundtrip", EVENTS * 50
+    )
+    subject = "Ket qua xu ly - roundtrip.mp4"
+    message, response = email_notifier.send_email(subject, body)
+    thread.join(5)
+    server_side.close()
+    client_side.close()
+
+    assert response == "QUEUED"
+    assert received["data"].decode("utf-8") == message
+    assert len(received["data"]) <= email_notifier.MAX_MESSAGE_BYTES
 
 
 # --------------------------------------------------------------------------
