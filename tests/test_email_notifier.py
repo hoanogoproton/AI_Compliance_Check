@@ -389,7 +389,7 @@ def test_email_sent_once_on_success_with_events(tmp_path, monkeypatch):
 
     assert len(sent) == 1
     subject, body, log = sent[0]
-    assert subject == "Ket qua xu ly - cam.mp4"
+    assert subject == "Kết quả xử lý - cam.mp4"
     output_dir = runner.journal["processed"][0]["output_dir"]
     assert body.startswith("<!DOCTYPE html>")
     assert "\n" not in body

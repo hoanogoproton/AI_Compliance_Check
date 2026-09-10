@@ -603,7 +603,7 @@ class WatchRunner:
         events = [ev for ev in events_detail if isinstance(ev, dict)]
         if not events:
             return
-        subject = f"Ket qua xu ly - {video.name}".replace("|", "/")
+        subject = f"Kết quả xử lý - {video.name}".replace("|", "/")
         body = email_notifier.build_results_html(
             video.name, str(item["output_dir"]), events
         )
