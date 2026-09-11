@@ -346,6 +346,8 @@ def _inference_worker(
                         is_detected = True
                     else:
                         is_detected = False
+                elif behavior.name == "danger_zone":
+                    is_detected = behavior.is_person_in_alert(tid, frame_idx)
                 else:
                     ts = behavior.event_manager._tracks.get(tid)
                     is_detected = bool(ts and ts.state == "ACTIVE")

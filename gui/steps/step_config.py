@@ -29,6 +29,12 @@ BEHAVIOR_PARAMS = {
         ("min_stay_frames", int, 1, 300, 10),
         ("leave_flash_frames", int, 1, 300, 20),
     ],
+    "danger_zone": [
+        ("zones", "zone_multi", None, None, None),
+        ("min_enter_frames", int, 1, 300, 3),
+        ("min_exit_frames", int, 1, 300, 5),
+        ("alert_flash_frames", int, 1, 300, 20),
+    ],
     "hand_in_zone": [
         ("zones", "zone_multi", None, None, None),
         ("hand", str, None, None, None),

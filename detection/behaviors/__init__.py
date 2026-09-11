@@ -1,5 +1,6 @@
 from detection.behaviors.hand_to_head import HandToHeadBehavior
 from detection.behaviors.leave_zone import LeaveZoneBehavior
+from detection.behaviors.danger_zone import DangerZoneBehavior
 from detection.behaviors.hand_in_zone import HandInZoneBehavior
 from detection.behaviors.head_turn import HeadTurnBehavior
 from detection.behaviors.head_turn_away import HeadTurnAwayBehavior

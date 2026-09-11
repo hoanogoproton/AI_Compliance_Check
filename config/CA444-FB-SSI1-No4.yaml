@@ -88,6 +88,21 @@ zones:
       - 675.0
     - - 1326.0
       - 451.0
+  Danger:
+    label: Danger
+    points:
+    - - 447.0
+      - 934.0
+    - - 292.0
+      - 746.0
+    - - 208.0
+      - 451.0
+    - - 2.0
+      - 423.0
+    - - 0
+      - 1072.0
+    - - 494.0
+      - 1072.0
 behaviors:
 - name: hand_to_head
   enabled: true
@@ -201,6 +216,14 @@ behaviors:
     confirmation_frames: 3
     max_gap_frames: 5
     min_event_frames: 5
+- name: danger_zone
+  enabled: true
+  params:
+    zones:
+    - Danger
+    min_enter_frames: 3
+    min_exit_frames: 5
+    alert_flash_frames: 20
 face_detection:
   min_detection_confidence: 0.5
   max_reprojection_error: 10.0

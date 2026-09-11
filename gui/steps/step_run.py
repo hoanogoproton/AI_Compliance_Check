@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 
 from gui.workers.pipeline_worker import PipelineWorker
 
-ZONE_BEHAVIORS = ("leave_zone", "hand_in_zone", "hand_shake_object", "hand_snatch_object")
+ZONE_BEHAVIORS = ("leave_zone", "danger_zone", "hand_in_zone", "hand_shake_object", "hand_snatch_object")
 
 
 class StepRun(QWidget):
