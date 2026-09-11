@@ -179,6 +179,60 @@ def test_min_leave_frames_resets_on_reentry():
     assert behavior._track_inside[1]
 
 
+def test_zone_in_flash_per_zone():
+    zone_a = Zone(name="A", label="Zone A", points=[[0, 0], [100, 0], [100, 100], [0, 100]])
+    zone_b = Zone(name="B", label="Zone B", points=[[300, 300], [400, 300], [400, 400], [300, 400]])
+    behavior = LeaveZoneBehavior(
+        {"min_stay_frames": 2, "min_leave_frames": 1, "leave_flash_frames": 5},
+        zones=[zone_a, zone_b],
+    )
+
+    inside = _make_person(1, (40, 40, 60, 60))
+    behavior.process_frame([inside], None, 0, 0.0)
+    behavior.process_frame([inside], None, 1, 0.033)
+    assert not behavior.is_zone_in_flash("A", 1)
+    assert not behavior.is_zone_in_flash("B", 1)
+
+    outside = _make_person(1, (200, 200, 220, 220))
+    events = behavior.process_frame([outside], None, 2, 0.066)
+    assert len(events) == 1
+    assert events[0].metadata["triggered_zones"] == ["A"]
+
+    assert behavior.is_zone_in_flash("A", 2)
+    assert not behavior.is_zone_in_flash("B", 2)
+    assert behavior.is_zone_in_flash("A", 7)
+    assert not behavior.is_zone_in_flash("A", 8)
+
+
+def test_zone_in_flash_never_left():
+    zone = Zone(name="test_zone", label="Test Zone", points=[[0, 0], [100, 0], [100, 100], [0, 100]])
+    behavior = LeaveZoneBehavior({"min_stay_frames": 2, "min_leave_frames": 1}, zones=[zone])
+    assert not behavior.is_zone_in_flash("test_zone", 10)
+
+
+def test_zone_in_flash_both_zones_on_full_leave():
+    zone_a = Zone(name="A", label="Zone A", points=[[0, 0], [100, 0], [100, 100], [0, 100]])
+    zone_b = Zone(name="B", label="Zone B", points=[[50, 50], [150, 50], [150, 150], [50, 150]])
+    behavior = LeaveZoneBehavior(
+        {"min_stay_frames": 2, "min_leave_frames": 1, "leave_flash_frames": 5},
+        zones=[zone_a, zone_b],
+    )
+
+    inside = _make_person(1, (70, 70, 80, 80))
+    behavior.process_frame([inside], None, 0, 0.0)
+    behavior.process_frame([inside], None, 1, 0.033)
+
+    outside = _make_person(1, (200, 200, 220, 220))
+    events = behavior.process_frame([outside], None, 2, 0.066)
+    assert len(events) == 1
+    assert events[0].metadata["triggered_zones"] == ["A", "B"]
+
+    assert behavior.is_zone_in_flash("A", 2)
+    assert behavior.is_zone_in_flash("B", 2)
+    assert not behavior.is_zone_in_flash("A", 8)
+    assert not behavior.is_zone_in_flash("B", 8)
+
+
 def test_min_leave_frames_default():
     zone = Zone(name="test_zone", label="Test Zone", points=[[0, 0], [100, 0], [100, 100], [0, 100]])
     behavior = LeaveZoneBehavior({"min_stay_frames": 2}, zones=[zone])

@@ -369,12 +369,7 @@ def _inference_worker(
                 for z in behavior.zones:
                     zn = z.name
                     if behavior.name == "leave_zone":
-                        flash_frames = behavior.params.get("leave_flash_frames", 20)
-                        is_active = any(
-                            frame_idx - leave_frame <= flash_frames
-                            for leave_frame in behavior._last_leave_frame.values()
-                        )
-                        state = "active" if is_active else "inactive"
+                        state = "active" if behavior.is_zone_in_flash(zn, frame_idx) else "inactive"
                     else:
                         active = any(
                             fd["behaviors"].get(behavior.name, {}).get("detected")

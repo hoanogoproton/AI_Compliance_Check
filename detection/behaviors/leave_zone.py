@@ -16,6 +16,7 @@ class LeaveZoneBehavior(BaseBehavior):
         self._track_inside_zones: dict[int, set[str]] = {}
         self._last_leave_frame: dict[int, int] = {}
         self._last_leave_zones: dict[int, list[str]] = {}
+        self._zone_leave_frames: dict[str, int] = {}
 
     def _validate_params(self):
         if len(self.zones) == 0:
@@ -23,6 +24,13 @@ class LeaveZoneBehavior(BaseBehavior):
 
     def is_person_in_flash(self, track_id: int, frame_idx: int) -> bool:
         leave_frame = self._last_leave_frame.get(track_id)
+        if leave_frame is None:
+            return False
+        flash_frames = self.params.get("leave_flash_frames", 20)
+        return frame_idx - leave_frame <= flash_frames
+
+    def is_zone_in_flash(self, zone_name: str, frame_idx: int) -> bool:
+        leave_frame = self._zone_leave_frames.get(zone_name)
         if leave_frame is None:
             return False
         flash_frames = self.params.get("leave_flash_frames", 20)
@@ -89,6 +97,8 @@ class LeaveZoneBehavior(BaseBehavior):
                     self._track_outside_counter[tid] = 0
                     self._last_leave_frame[tid] = frame_idx
                     self._last_leave_zones[tid] = left_zones
+                    for zname in left_zones:
+                        self._zone_leave_frames[zname] = frame_idx
                     return DetectionResult(
                         track_id=tid, detected=True, confidence=1.0,
                         metadata={
