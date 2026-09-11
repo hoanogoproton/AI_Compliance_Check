@@ -316,6 +316,61 @@ def test_send_email_roundtrip_delivers_full_message(monkeypatch):
 
 
 # --------------------------------------------------------------------------
+# Behavior name mapping (config/map_name.csv)
+# --------------------------------------------------------------------------
+
+_MAP_CSV = "behavior_en,behavior_vi\nleave_zone,Rời khỏi vùng\n"
+
+
+def _patch_map_csv(monkeypatch, tmp_path, content=_MAP_CSV):
+    csv_file = tmp_path / "map_name.csv"
+    csv_file.write_text(content, encoding="utf-8")
+    monkeypatch.setattr(email_notifier, "MAP_NAME_CSV", csv_file)
+
+
+def test_event_row_uses_vietnamese_behavior_name(tmp_path, monkeypatch):
+    _patch_map_csv(monkeypatch, tmp_path)
+    body = email_notifier.build_results_html(
+        "v.mp4",
+        r"D:\out",
+        [
+            {
+                "event_id": 1,
+                "behavior": "leave_zone",
+                "start_time_sec": 1.0,
+                "end_time_sec": 2.0,
+            }
+        ],
+    )
+
+    assert "Rời khỏi vùng" in body
+    assert "leave_zone" not in body
+
+
+def test_unmapped_behavior_keeps_original_name(tmp_path, monkeypatch):
+    _patch_map_csv(monkeypatch, tmp_path)
+    body = email_notifier.build_results_html(
+        "v.mp4",
+        r"D:\out",
+        [
+            {
+                "event_id": 1,
+                "behavior": "vay tay",
+                "start_time_sec": 1.0,
+                "end_time_sec": 2.0,
+            }
+        ],
+    )
+
+    assert "vay tay" in body
+
+
+def test_load_behavior_name_map_missing_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(email_notifier, "MAP_NAME_CSV", tmp_path / "missing.csv")
+    assert email_notifier.load_behavior_name_map() == {}
+
+
+# --------------------------------------------------------------------------
 # send_results_email_async (fire-and-forget thread)
 # --------------------------------------------------------------------------
 

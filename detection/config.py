@@ -61,11 +61,23 @@ HAND_SHAKE_OBJECT_FREQ_MAX_HZ = 3.4
 HAND_SHAKE_OBJECT_RESET_GAP_SECONDS = 0.5
 HAND_SHAKE_OBJECT_STALE_TRACK_SECONDS = 5.0
 
-HAND_SNATCH_OBJECT_MIN_GRASP_FRAMES = 3
 HAND_SNATCH_OBJECT_VELOCITY_RATIO = 0.15
 HAND_SNATCH_OBJECT_APPROACH_WINDOW = 10
 HAND_SNATCH_OBJECT_BASELINE_RATIO = 2.0
 HAND_SNATCH_OBJECT_KEYPOINT_CONF_THRESHOLD = 0.5
+# --- Improved (fps-aware, time-based) parameters for hand_snatch_object ---
+# Thuật toán "giữ rồi giật" (hold-then-jerk): tay phải giữ yên trong zone
+# đủ lâu trước khi giật đột ngột mới được tính là giật đồ.
+HAND_SNATCH_OBJECT_HOLD_STILL_SPEED = 0.2       # sw/s: tốc độ tối đa để coi là "đang giữ yên"
+HAND_SNATCH_OBJECT_MIN_HOLD_SECONDS = 0.4       # thời gian giữ yên tối thiểu (giây)
+HAND_SNATCH_OBJECT_ARMED_WINDOW_SECONDS = 0.6   # cửa sổ chờ cú giật sau khi Stillness vỡ
+HAND_SNATCH_OBJECT_SPIKE_RATIO = 3.0            # tốc độ giật phải vượt spike_ratio × baseline lúc giữ
+HAND_SNATCH_OBJECT_MIN_JERK_DISPLACEMENT_RATIO = 0.25  # dịch chuyển ròng tối thiểu (× vai)
+HAND_SNATCH_OBJECT_EMA_TAU = 0.1                # hằng số thời gian EMA (giây)
+HAND_SNATCH_OBJECT_RESET_GAP_SECONDS = 0.5      # mất dấu tay quá lâu → reset
+HAND_SNATCH_OBJECT_STALE_TRACK_SECONDS = 5.0    # track biến mất quá lâu → dọn state
+HAND_SNATCH_OBJECT_COOLDOWN_SECONDS = 0.5       # nghỉ giữa hai lần bắn của cùng một tay
+HAND_SNATCH_OBJECT_SUSTAIN_MAX_SECONDS = 1.5    # trần thời gian sustain cho event manager
 
 BODY_TURN_MIN_ANGLE = 30.0
 BODY_TURN_WINDOW_SECONDS = 0.85

@@ -207,6 +207,30 @@ def test_new_video_processed_then_deleted(tmp_path):
     assert len(calls) == 1  # no reprocessing
 
 
+@pytest.mark.parametrize("send_email", [True, False])
+def test_results_email_toggle(tmp_path, monkeypatch, send_email):
+    """``send_email=False`` skips the results email; the default sends it."""
+    sent = []
+    monkeypatch.setattr(
+        wf.email_notifier,
+        "send_results_email_async",
+        lambda subject, body, log=None: sent.append(subject),
+    )
+    runner, folder, cfg = _make_runner(
+        tmp_path, _fake_pipeline_ok([]), send_email=send_email
+    )
+    assert runner.send_email is send_email
+    runner.run_cycle()               # folder first seen, empty
+    (folder / "v.mp4").write_bytes(b"v" * 50)
+    runner.run_cycle()               # sighting (not stable yet)
+    runner.run_cycle()               # stable -> processed, 3 events in metadata
+    if send_email:
+        assert len(sent) == 1
+        assert sent[0] == "Kết quả xử lý - v.mp4"
+    else:
+        assert sent == []
+
+
 def test_error_keeps_video_then_gives_up(tmp_path):
     calls = []
 

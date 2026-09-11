@@ -17,6 +17,12 @@ with diacritics, encoded as UTF-8 (the HTML declares ``charset="utf-8"``);
 because accented characters take 2-3 bytes each, the budget is computed
 on UTF-8 byte lengths.
 
+Event rows show the behavior in Vietnamese: the English name stored in
+the metadata (e.g. ``leave_zone``) is translated through
+``config/map_name.csv`` (columns ``behavior_en,behavior_vi``, see
+``load_behavior_name_map``); names missing from the CSV are displayed
+as-is.
+
 In the results email the output folder is rendered as a clickable link:
 absolute local paths become ``file:///`` URIs and ``http(s)://`` URLs are
 kept as they are; anything else (relative paths) stays plain text. Note
@@ -29,16 +35,21 @@ Edit the constants below to point at a different server or factory.
 
 from __future__ import annotations
 
+import csv
 import html
 import socket
 import threading
 import urllib.parse
 from datetime import datetime
+from pathlib import Path
 
 SERVER_IP = "172.17.108.169"
 SERVER_PORT = 1111
 FACTORY = "PM6"
 SOCKET_TIMEOUT = 10  # seconds
+
+# English -> Vietnamese behavior name map (see load_behavior_name_map()).
+MAP_NAME_CSV = Path(__file__).resolve().parent / "config" / "map_name.csv"
 
 # The mail service cuts off long requests (the old rich-HTML body arrived
 # truncated mid-table), so the whole request "envelope + subject + body" is
@@ -76,6 +87,57 @@ _TEMPLATE = (
     " - Nhà máy __FACTORY__</p>"
     "</body></html>"
 )
+
+_BEHAVIOR_VI_MAP: dict[str, str] = {}
+_BEHAVIOR_VI_STAMP: tuple[str, float | None] | None = None
+
+
+def load_behavior_name_map() -> dict[str, str]:
+    """English -> Vietnamese behavior names from ``config/map_name.csv``.
+
+    The CSV has two columns, ``behavior_en,behavior_vi``. It is parsed
+    once and cached, and re-read automatically when the file changes on
+    disk so the mapping can be edited while the watcher is running. A
+    missing, empty or malformed CSV simply yields an empty map - the
+    email then keeps the original English names, so a bad mapping file
+    can never break the email itself.
+    """
+    global _BEHAVIOR_VI_MAP, _BEHAVIOR_VI_STAMP
+    try:
+        stamp: tuple[str, float | None] = (
+            str(MAP_NAME_CSV),
+            MAP_NAME_CSV.stat().st_mtime,
+        )
+    except OSError:
+        stamp = (str(MAP_NAME_CSV), None)
+    if stamp == _BEHAVIOR_VI_STAMP:
+        return _BEHAVIOR_VI_MAP
+    mapping: dict[str, str] = {}
+    if stamp[1] is not None:
+        try:
+            with open(MAP_NAME_CSV, newline="", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f)
+                fields = [
+                    (x or "").strip().lower() for x in (reader.fieldnames or [])
+                ]
+                if "behavior_en" in fields and "behavior_vi" in fields:
+                    for row in reader:
+                        en = str(row.get("behavior_en") or "").strip()
+                        vi = str(row.get("behavior_vi") or "").strip()
+                        if en and vi:
+                            mapping[en] = vi
+        except (OSError, UnicodeDecodeError, csv.Error):
+            pass  # unreadable CSV -> keep the English names
+    _BEHAVIOR_VI_MAP = mapping
+    _BEHAVIOR_VI_STAMP = stamp
+    return _BEHAVIOR_VI_MAP
+
+
+def _behavior_vi(behavior: str) -> str:
+    """Vietnamese display name for a behavior, or the input when unmapped."""
+    if not behavior:
+        return ""
+    return load_behavior_name_map().get(behavior, behavior)
 
 
 def send_email(subject: str, body: str) -> tuple[str, str]:
@@ -182,7 +244,7 @@ def _fmt_seconds(value) -> str:
 
 
 def _event_row(event: dict) -> str:
-    behavior = str(event.get("behavior") or "").strip() or _DASH
+    behavior = _behavior_vi(str(event.get("behavior") or "").strip()) or _DASH
     start = _fmt_seconds(event.get("start_time_sec"))
     end = _fmt_seconds(event.get("end_time_sec"))
     return (

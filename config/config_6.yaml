@@ -124,7 +124,11 @@ behaviors:
 - name: hand_snatch_object
   enabled: false
   params:
-    min_grasp_frames: 3
+    min_hold_seconds: 0.4
+    hold_still_speed: 0.2
+    armed_window_seconds: 0.6
+    spike_ratio: 3.0
+    min_jerk_displacement_ratio: 0.25
     snatch_velocity_ratio: 0.1
     approach_window: 10
     velocity_baseline_ratio: 2.0

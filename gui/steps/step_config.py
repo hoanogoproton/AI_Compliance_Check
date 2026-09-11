@@ -87,7 +87,11 @@ BEHAVIOR_PARAMS = {
     ],
     "hand_snatch_object": [
         ("zones", "zone_multi", None, None, None),
-        ("min_grasp_frames", int, 1, 300, 3),
+        ("min_hold_seconds", float, 0.1, 5.0, 0.4),
+        ("hold_still_speed", float, 0.01, 2.0, 0.2),
+        ("armed_window_seconds", float, 0.1, 5.0, 0.6),
+        ("spike_ratio", float, 1.0, 20.0, 3.0),
+        ("min_jerk_displacement_ratio", float, 0.01, 2.0, 0.25),
         ("snatch_velocity_ratio", float, 0.01, 2.0, 0.15),
         ("approach_window", int, 1, 300, 10),
         ("velocity_baseline_ratio", float, 1.0, 10.0, 2.0),

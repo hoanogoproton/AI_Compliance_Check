@@ -225,6 +225,7 @@ class WatchRunner:
         journal_path: str | Path | None = None,
         max_cycles: int | None = None,
         max_retries: int = DEFAULT_MAX_RETRIES,
+        send_email: bool = True,
         pipeline_fn=None,
         event_callback: Callable[[dict], None] | None = None,
         frame_callback: Callable | None = None,
@@ -241,6 +242,7 @@ class WatchRunner:
         self.debug_keypoints = debug_keypoints
         self.max_cycles = max_cycles
         self.max_retries = max(1, int(max_retries))
+        self.send_email = bool(send_email)
         self.journal_path = (
             Path(journal_path) if journal_path else self.output_base / JOURNAL_NAME
         )
@@ -595,9 +597,12 @@ class WatchRunner:
     def _send_results_email(self, item: dict, video: Path, events_detail) -> None:
         """Email the event list after a successful run (fire-and-forget).
 
-        Skipped when metadata is missing/corrupt or holds zero events; the
-        watcher's success state is never affected by sending.
+        Skipped when ``send_email`` is off, metadata is missing/corrupt or
+        holds zero events; the watcher's success state is never affected by
+        sending.
         """
+        if not self.send_email:
+            return
         if not events_detail:
             return
         events = [ev for ev in events_detail if isinstance(ev, dict)]
@@ -695,7 +700,10 @@ class WatchRunner:
         )
         self._log("Folder watcher started.")
         self._log(f"  watch CSV  : {self.csv_path}")
-        self._log(f"  poll every : {self.poll_interval:g}s | visualize: {self.visualize}")
+        self._log(
+            f"  poll every : {self.poll_interval:g}s | visualize: {self.visualize} "
+            f"| email: {'on' if self.send_email else 'off'}"
+        )
         self._log(f"  journal    : {self.journal_path}")
         self._log("Press Ctrl+C to stop.")
         self._emit(
@@ -795,6 +803,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--max-retries", type=int, default=DEFAULT_MAX_RETRIES,
                    help="Retries per video before giving up (default: 2).")
     p.add_argument(
+        "--no-email", action="store_true",
+        help="Do not send the results email after each processed video.",
+    )
+    p.add_argument(
         "--max-cycles", type=int, default=None,
         help="Stop after N poll cycles (for testing; default: run forever).",
     )
@@ -823,6 +835,7 @@ def main(argv: list[str] | None = None) -> int:
         journal_path=args.journal,
         max_cycles=args.max_cycles,
         max_retries=args.max_retries,
+        send_email=not args.no_email,
     )
     return runner.run()
 

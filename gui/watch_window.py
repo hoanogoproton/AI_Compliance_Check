@@ -145,6 +145,14 @@ class WatchWindow(QMainWindow):
         )
         self.auto_fetch_check.toggled.connect(self._on_auto_fetch_toggled)
         row1.addWidget(self.auto_fetch_check)
+
+        self.email_check = QCheckBox("Gửi email kết quả")
+        self.email_check.setChecked(True)
+        self.email_check.setToolTip(
+            "Sau khi mỗi video xử lý xong, gửi email danh sách sự kiện tới\n"
+            "dịch vụ thư của nhà máy. Chỉ đổi được trước khi bấm Khởi động."
+        )
+        row1.addWidget(self.email_check)
         root.addLayout(row1)
 
         row2 = QHBoxLayout()
@@ -280,6 +288,7 @@ class WatchWindow(QMainWindow):
             poll_interval=self.poll_spin.value(),
             output_dir=self.out_edit.text().strip() or DEFAULT_OUTPUT_DIR,
             visualize=self.visualize_check.isChecked(),
+            send_email=self.email_check.isChecked(),
         )
 
         if self.auto_fetch_check.isChecked():
@@ -320,7 +329,7 @@ class WatchWindow(QMainWindow):
         self.stop_btn.setEnabled(running)
         for widget in (
             self.csv_edit, self.csv_btn, self.out_edit, self.out_btn,
-            self.poll_spin, self.visualize_check,
+            self.poll_spin, self.visualize_check, self.email_check,
         ):
             widget.setEnabled(not running)
 

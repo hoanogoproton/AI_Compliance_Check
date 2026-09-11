@@ -1,74 +1,96 @@
 crop:
-- 241
-- 190
-- 845
-- 890
+- 0
+- 0
+- 1646
+- 1079
 model:
-  path: yolo26n-pose.pt
-  conf: 0.5
-  iou: 0.4
+  path: yolo11n-pose.pt
+  conf: 0.4
+  iou: 0.2
 output:
-  dir: ./outputs/CA927-FB-RAI7-No3-20260822-093621_P2
+  dir: ./outputs/CA444-FB-SSI1-No4-20260911-104908
   visualize: true
   context_seconds: 5
   crop_padding: 10
   debug_keypoints: true
 zones:
+  Work:
+    label: Work
+    points:
+    - - 1010.0
+      - 0
+    - - 764.0
+      - 1072.0
+    - - 500.0
+      - 1074.0
+    - - 451.0
+      - 928.0
+    - - 292.0
+      - 735.0
+    - - 181.0
+      - 680.0
+    - - 881.0
+      - 0
+  Work_2:
+    label: Work_2
+    points:
+    - - 1050.0
+      - 0
+    - - 1067.0
+      - 1078
+    - - 1506.0
+      - 1078
+    - - 1639.0
+      - 766.0
+    - - 1171.0
+      - 0
   PHC:
     label: PHC
     points:
-    - - 186.0
-      - 287.0
-    - - 222.0
-      - 399.0
-    - - 283.0
-      - 413.0
-    - - 314.0
-      - 348.0
-    - - 220.0
-      - 258.0
+    - - 1519.0
+      - 529.0
+    - - 1501.0
+      - 594.0
+    - - 1522.0
+      - 616.0
+    - - 1549.0
+      - 542.0
   PHC_2:
     label: PHC_2
     points:
-    - - 310.0
-      - 169.0
-    - - 323.0
-      - 219.0
-    - - 376.0
-      - 243.0
-    - - 399.0
-      - 215.0
-    - - 328.0
-      - 145.0
-  PHC_3:
-    label: PHC_3
+    - - 1383.0
+      - 295.0
+    - - 1367.0
+      - 344.0
+    - - 1391.0
+      - 354.0
+    - - 1410.0
+      - 304.0
+  SA:
+    label: SA
     points:
-    - - 381.0
-      - 84.0
-    - - 389.0
-      - 122.0
-    - - 433.0
-      - 152.0
-    - - 462.0
-      - 113.0
-    - - 400.0
-      - 64.0
-  Leave:
-    label: Leave
+    - - 1344.0
+      - 715.0
+    - - 1415.0
+      - 983.0
+    - - 1499.0
+      - 979.0
+    - - 1413.0
+      - 704.0
+  SA_2:
+    label: SA_2
     points:
-    - - 250.0
-      - 598.0
-    - - 512.0
-      - 0
-    - - 660.0
-      - 1.0
-    - - 781.0
-      - 806.0
-    - - 608.0
-      - 870.0
+    - - 1282.0
+      - 469.0
+    - - 1335.0
+      - 673.0
+    - - 1411.0
+      - 675.0
+    - - 1326.0
+      - 451.0
 behaviors:
 - name: hand_to_head
-  enabled: false
+  enabled: true
   params:
     distance_threshold_ratio: 0.9
     vertical_offset_ratio: 0.2
@@ -81,33 +103,36 @@ behaviors:
   enabled: true
   params:
     zones:
-    - Leave
-    min_stay_frames: 14
-    leave_flash_frames: 14
+    - Work
+    - Work_2
+    min_stay_frames: 35
+    leave_flash_frames: 35
 - name: hand_in_zone
   enabled: true
   params:
     zones:
     - PHC
     - PHC_2
-    - PHC_3
     hand: any
     min_duration_frames: 1
     confirmation_frames: 3
     max_gap_frames: 1
     min_event_frames: 3
 - name: head_turn
-  enabled: false
+  enabled: true
   params:
-    turn_threshold_ratio: 0.3
+    turn_threshold_ratio: 0.5
     window_frames: 21
     max_turns: 2
-    confirmation_frames: 2
+    confirmation_frames: 1
     max_gap_frames: 1
-    min_event_frames: 3
+    min_event_frames: 1
 - name: hand_shake_object
   enabled: false
   params:
+    zones:
+    - SA
+    - SA_2
     window_seconds: 2.0
     min_reversals: 3
     min_displacement_ratio: 0.01
@@ -115,31 +140,34 @@ behaviors:
     min_frequency_hz: 0.5
     max_frequency_hz: 3.4
     smoothing_tau: 0.1
-    keypoint_conf_threshold: 0.5
+    keypoint_conf_threshold: 0.3
     confirmation_frames: 2
     max_gap_frames: 3
     min_event_frames: 7
 - name: body_turn
   enabled: false
   params:
-    min_angle: 70.0
+    min_angle: 30.0
     window_seconds: 2.0
     velocity_threshold_deg_s: 30.0
-    smoothing_frames: 3
-    track_gap_frames: 10
-    cooldown_frames: 7
+    smoothing_frames: 2
+    track_gap_frames: 2
+    cooldown_frames: 2
     stale_frames: 70
-    confirmation_frames: 3
-    max_gap_frames: 3
+    confirmation_frames: 2
+    max_gap_frames: 2
     min_event_frames: 7
 - name: hand_snatch_object
-  enabled: false
+  enabled: true
   params:
-    min_hold_seconds: 0.4
+    zones:
+    - SA
+    - SA_2
+    min_hold_seconds: 1.0
     hold_still_speed: 0.2
     armed_window_seconds: 0.6
     spike_ratio: 3.0
-    min_jerk_displacement_ratio: 0.25
+    min_jerk_displacement_ratio: 0.5
     snatch_velocity_ratio: 0.1
     approach_window: 10
     velocity_baseline_ratio: 2.0
@@ -158,9 +186,9 @@ behaviors:
     body_confidence_threshold: 0.4
     body_min_visible_keypoints: 3
     window_frames: 21
-    max_turns: 1
+    max_turns: 2
     confirmation_frames: 1
-    max_gap_frames: 2
+    max_gap_frames: 1
     min_event_frames: 1
 - name: head_shake
   enabled: false
