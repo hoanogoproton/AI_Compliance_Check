@@ -47,6 +47,19 @@ def _hold(x=250.0, y=140.0, n=15, **extra):
     return [{"wrist_l_x": x, "wrist_l_y": y, **extra} for _ in range(n)]
 
 
+def _run_with_process_frame(behavior, track_id, keypoint_seq, fps=30.0):
+    """Chạy sequence qua ``process_frame`` (không phải detect_person trực tiếp)
+    để ``_frame_alert_zones`` được clear đúng mỗi frame. Trả về danh sách
+    ``(detected, current_triggered_zones)`` snapshot sau từng frame."""
+    frames = []
+    for i, kpt_kwargs in enumerate(keypoint_seq):
+        person = _make_person(track_id, **kpt_kwargs)
+        behavior.process_frame([person], None, i, i / fps)
+        frames.append((bool(behavior._last_detections.get(track_id)),
+                       set(behavior.current_triggered_zones)))
+    return frames
+
+
 def test_no_zone_raises():
     try:
         HandSnatchObjectBehavior({})
@@ -264,3 +277,45 @@ def test_low_fps_still_fires():
     results = _run_sequence(behavior, 1, seq, fps=7)
     assert results[-1].detected, "Hold 3 frames @7fps (~0.43s) then fast exit should fire"
     assert results[-1].metadata["snatch_type"] == "snatch_out"
+
+
+def test_zone_not_red_when_hand_merely_in_zone():
+    behavior = HandSnatchObjectBehavior({"snatch_velocity_ratio": 0.15}, zones=[_make_zone()], fps=30)
+    # Giữ yên trong zone: chưa có cú giật → không detected và zone không đỏ
+    frames = _run_with_process_frame(behavior, 1, _hold(x=250.0, n=20))
+    for detected, zones in frames:
+        assert not detected, "Holding alone must never be detected"
+        assert zones == set(), "Zone must stay green while the hand merely rests in it"
+
+
+def test_zone_red_on_fire_and_sustain():
+    behavior = HandSnatchObjectBehavior({"snatch_velocity_ratio": 0.15}, zones=[_make_zone()], fps=30)
+    # Giữ 15 frame rồi giật ra xa (snatch_in); tay đứng yên lại tại chỗ sau cú giật
+    seq = _hold(x=230.0, n=15) + [{"wrist_l_x": 290, "wrist_l_y": 140}] + _hold(x=290.0, n=35)
+    frames = _run_with_process_frame(behavior, 1, seq)
+    fire_idx = 15
+    assert frames[fire_idx][0], "Jerk after hold must fire"
+    assert frames[fire_idx][1] == {"TestZone"}, "Zone must turn red on the fire frame"
+    for i in range(fire_idx + 1, fire_idx + behavior._sustain_frames):
+        assert frames[i][0], "Sustain frames must stay detected"
+        assert frames[i][1] == {"TestZone"}, "Zone must stay red during sustain"
+    after_idx = fire_idx + behavior._sustain_frames
+    assert not frames[after_idx][0]
+    assert frames[after_idx][1] == set(), "Zone must return to green once sustain ends"
+
+
+def test_snatch_out_attributes_zone_after_exit():
+    behavior = HandSnatchObjectBehavior({"snatch_velocity_ratio": 0.15}, zones=[_make_zone()], fps=30)
+    seq = _hold(x=250.0, n=15) + [{"wrist_l_x": 350, "wrist_l_y": 140}]
+    results = _run_sequence(behavior, 1, seq)
+    assert results[-1].detected, "Fast exit after hold should fire snatch-out"
+    assert results[-1].metadata["triggered_zones"] == ["TestZone"], \
+        "Fire metadata must attribute the last in-zone zone even after exit"
+
+    # current_triggered_zones chỉ đo đúng khi đi qua process_frame (clear mỗi frame)
+    behavior2 = HandSnatchObjectBehavior({"snatch_velocity_ratio": 0.15}, zones=[_make_zone()], fps=30)
+    frames = _run_with_process_frame(behavior2, 1, seq)
+    assert not any(detected for detected, _ in frames[:15]), "Holding alone must not fire"
+    assert frames[15][0], "Snatch-out must fire"
+    assert frames[15][1] == {"TestZone"}, \
+        "Zone must be red on the snatch-out fire frame although the wrist already left"

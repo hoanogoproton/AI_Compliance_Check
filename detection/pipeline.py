@@ -222,6 +222,39 @@ def _apply_classifier_filter(
 PREVIEW_MIN_INTERVAL = 0.1  # min seconds between realtime preview frames (~10 FPS)
 
 
+def _compute_zone_active(behaviors: list, frame_data: dict, frame_idx: int) -> dict[str, str]:
+    """Tính trạng thái tô màu từng zone cho frame hiện tại.
+
+    Trả về dict tên zone -> "active"/"inactive". Khi nhiều behavior dùng
+    chung một zone, trạng thái là OR giữa các behavior (chỉ cần một behavior
+    thấy zone active là zone đỏ), thay vì behavior đứng sau ghi đè behavior
+    trước trong config.
+
+    Nguồn "active" theo từng behavior:
+    - ``leave_zone``: ``is_zone_in_flash`` (flash sau khi người rời zone).
+    - Behavior có ``current_triggered_zones`` (danger_zone, hand_in_zone,
+      hand_snatch_object): zone nằm trong set đó.
+    - Còn lại (ví dụ hand_shake_object): có người nào ``detected=True``.
+    """
+    zone_active: dict[str, str] = {}
+    for behavior in behaviors:
+        if hasattr(behavior, 'zones') and behavior.zones:
+            for z in behavior.zones:
+                zn = z.name
+                if behavior.name == "leave_zone":
+                    active = behavior.is_zone_in_flash(zn, frame_idx)
+                else:
+                    active = any(
+                        fd["behaviors"].get(behavior.name, {}).get("detected")
+                        for fd in frame_data.values()
+                    )
+                    if hasattr(behavior, 'current_triggered_zones'):
+                        active = zn in behavior.current_triggered_zones
+                prev = zone_active.get(zn, "inactive")
+                zone_active[zn] = "active" if (active or prev == "active") else "inactive"
+    return zone_active
+
+
 def _annotate_frame(
     frame: np.ndarray,
     frame_idx: int,
@@ -363,22 +396,7 @@ def _inference_worker(
             oldest = min(frame_data_cache)
             del frame_data_cache[oldest]
 
-        zone_active = {}
-        for behavior in behaviors:
-            if hasattr(behavior, 'zones') and behavior.zones:
-                for z in behavior.zones:
-                    zn = z.name
-                    if behavior.name == "leave_zone":
-                        state = "active" if behavior.is_zone_in_flash(zn, frame_idx) else "inactive"
-                    else:
-                        active = any(
-                            fd["behaviors"].get(behavior.name, {}).get("detected")
-                            for fd in frame_data.values()
-                        )
-                        if hasattr(behavior, 'current_triggered_zones'):
-                            active = zn in behavior.current_triggered_zones
-                        state = "active" if active else "inactive"
-                    zone_active[zn] = state
+        zone_active = _compute_zone_active(behaviors, frame_data, frame_idx)
 
         write_queue.put((frame_idx, frame, people, all_new_events, zone_active))
 

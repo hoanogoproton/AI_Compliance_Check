@@ -51,6 +51,7 @@ class _HandSnatchState:
     sustain_remaining: int = 0  # số frame còn phải sustain detected=True
     sustain_result: "DetectionResult | None" = None  # kết quả giữ nguyên metadata khi sustain
     fire_seq: int = 0  # thứ tự lần bắn (chọn sustain mới nhất khi cả hai tay cùng sustain)
+    holding_zones: set[str] = field(default_factory=set)  # zone lần cuối cổ tay nằm trong
 
     def reset_motion(self) -> None:
         """Xoá toàn bộ trạng thái (mất dấu tay / gap quá lâu)."""
@@ -69,6 +70,7 @@ class _HandSnatchState:
         self.jerk_still_baseline = 0.0
         self.jerk_recent_baseline = 0.0
         self.peak_velocity = 0.0
+        self.holding_zones = set()
 
 
 @register_behavior("hand_snatch_object")
@@ -105,7 +107,7 @@ class HandSnatchObjectBehavior(BaseBehavior):
         self._hand_state: dict[tuple[int, str], _HandSnatchState] = {}
         self._last_track_frame: dict[int, int] = {}
         self._last_detections: dict[int, bool] = {}
-        self._frame_triggered_zones: set[str] = set()
+        self._frame_alert_zones: set[str] = set()  # zone có detection thật trong frame hiện tại
 
         self._conf_thresh = float(self.params.get(
             "keypoint_conf_threshold", HAND_SNATCH_OBJECT_KEYPOINT_CONF_THRESHOLD))
@@ -146,10 +148,11 @@ class HandSnatchObjectBehavior(BaseBehavior):
 
     @property
     def current_triggered_zones(self) -> set[str]:
-        return self._frame_triggered_zones
+        """Zone đỏ ở frame hiện tại: chỉ tính detection thật (fire hoặc sustain)."""
+        return self._frame_alert_zones
 
     def process_frame(self, people, frame, frame_idx, timestamp):
-        self._frame_triggered_zones.clear()
+        self._frame_alert_zones.clear()
         events = super().process_frame(people, frame, frame_idx, timestamp)
         self._prune_stale(frame_idx, current_tids={p.track_id for p in people})
         return events
@@ -203,13 +206,14 @@ class HandSnatchObjectBehavior(BaseBehavior):
                     self._hand_state[key].reset_motion()
                 continue
 
-            in_zone = False
-            for z in self.zones:
-                if z.contains_point(wx, wy):
-                    in_zone = True
-                    self._frame_triggered_zones.add(z.name)
+            zone_names = {z.name for z in self.zones if z.contains_point(wx, wy)}
+            in_zone = bool(zone_names)
 
             st = self._hand_state.setdefault(key, _HandSnatchState())
+            if zone_names:
+                # Chỉ update khi cổ tay còn in zone (không xoá khi rời zone):
+                # snatch_out bắn đúng frame tay vừa thoát nên vẫn thuộc đúng zone.
+                st.holding_zones = zone_names
             result = self._update_hand_state(st, key, in_zone, wx, wy, now, sc, shoulder_width)
             if result is not None:
                 fired_keys.add(key)
@@ -397,10 +401,13 @@ class HandSnatchObjectBehavior(BaseBehavior):
                 "jerk_displacement_ratio": round(displacement_ratio, 4),
                 "peak_velocity": round(st.peak_velocity, 4),
                 "zone": self.zones[0].name,
-                "triggered_zones": sorted(self._frame_triggered_zones),
+                "triggered_zones": sorted(st.holding_zones),
                 "fps": self.fps,
             },
         )
+        # Zone đỏ ngay tại frame bắn; đọc holding_zones trước khi
+        # reset_pattern() xoá nó.
+        self._frame_alert_zones.update(sorted(st.holding_zones))
         st.reset_pattern()
         st.cooldown_until = now + self._cooldown
         return st.sustain_result
@@ -436,6 +443,10 @@ class HandSnatchObjectBehavior(BaseBehavior):
 
         if best_sustain is not None:
             self._last_detections[tid] = True
+            # Giữ zone đỏ trong các frame sustain (detected=True là detection
+            # thật phục vụ event manager xác nhận).
+            self._frame_alert_zones.update(
+                best_sustain.metadata.get("triggered_zones", []))
             return best_sustain
 
         self._last_detections[tid] = False
