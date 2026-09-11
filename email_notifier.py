@@ -17,6 +17,13 @@ with diacritics, encoded as UTF-8 (the HTML declares ``charset="utf-8"``);
 because accented characters take 2-3 bytes each, the budget is computed
 on UTF-8 byte lengths.
 
+In the results email the output folder is rendered as a clickable link:
+absolute local paths become ``file:///`` URIs and ``http(s)://`` URLs are
+kept as they are; anything else (relative paths) stays plain text. Note
+that some mail clients (Outlook, Gmail) block ``file://`` links for
+security reasons - publish the results on an internal file server and use
+its URL as the output folder if the link must open for every recipient.
+
 Edit the constants below to point at a different server or factory.
 """
 
@@ -25,6 +32,7 @@ from __future__ import annotations
 import html
 import socket
 import threading
+import urllib.parse
 from datetime import datetime
 
 SERVER_IP = "172.17.108.169"
@@ -63,7 +71,7 @@ _TEMPLATE = (
     "</table>"
     "__MORE_PARA__"
     "<p>Thời gian xử lý: <b>__TIME__</b><br>"
-    "Thư mục kết quả: __FOLDER__</p>"
+    "Thư mục kết quả: __FOLDER_LINK__</p>"
     '<p style="color:#999;font-size:11px;">Email tự động - không trả lời.'
     " - Nhà máy __FACTORY__</p>"
     "</body></html>"
@@ -123,6 +131,49 @@ def _esc(value) -> str:
     return html.escape(str(value), quote=True)
 
 
+def _file_uri(path_text: str) -> str | None:
+    """Best-effort ``file:///`` URI for a local path, or ``None``.
+
+    Absolute Windows drive paths (``D:/out``), UNC shares
+    (``//server/share``) and POSIX absolute paths are supported; spaces and
+    non-ASCII characters are percent-encoded. Relative paths return ``None``
+    so the email keeps plain text instead of a broken link.
+    """
+    text = str(path_text).strip()
+    if not text:
+        return None
+    if (
+        len(text) >= 3
+        and text[1] == ":"
+        and text[2] in "/\\"
+        and text[0].isascii()
+        and text[0].isalpha()
+    ):
+        # Windows drive path -> file:///D:/out
+        return "file:///" + urllib.parse.quote(text.replace("\\", "/"), safe="/:")
+    if text.startswith("\\\\"):  # UNC share -> file://server/share
+        return "file://" + urllib.parse.quote(text[2:].replace("\\", "/"), safe="/:")
+    if text.startswith("/"):  # POSIX absolute path -> file:///home/user/out
+        return "file://" + urllib.parse.quote(text, safe="/:")
+    return None
+
+
+def _folder_anchor(output_dir: str) -> str:
+    """Render the output folder as a clickable link when possible.
+
+    ``http(s)://`` URLs are linked as-is and absolute local paths become
+    ``file:///`` links; anything else falls back to plain escaped text.
+    """
+    text = _esc(output_dir)
+    stripped = str(output_dir).strip()
+    if stripped.lower().startswith(("http://", "https://")):
+        return f'<a href="{_esc(stripped)}">{text}</a>'
+    uri = _file_uri(output_dir)
+    if uri is None:
+        return text
+    return f'<a href="{_esc(uri)}">{text}</a>'
+
+
 def _fmt_seconds(value) -> str:
     try:
         return f"{float(value):g}"
@@ -160,6 +211,11 @@ def build_results_html(
     When there is not enough room for every event row, only the first rows
     are embedded and a note states how many more events are listed in the
     output folder.
+
+    The output folder is rendered as a clickable link when ``output_dir``
+    is an absolute local path (``file:///`` URI) or an ``http(s)://`` URL;
+    otherwise it stays plain text. The link is part of the fixed overhead,
+    so the row budget automatically accounts for its bytes.
     """
     valid = [ev for ev in events if isinstance(ev, dict)]
     if processed_at is None:
@@ -172,7 +228,7 @@ def build_results_html(
     )
     tail = (
         tail.replace("__TIME__", _esc(processed_at))
-        .replace("__FOLDER__", _esc(output_dir))
+        .replace("__FOLDER_LINK__", _folder_anchor(output_dir))
         .replace("__FACTORY__", _esc(FACTORY))
     )
     budget = (

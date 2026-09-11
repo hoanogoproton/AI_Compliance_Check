@@ -216,6 +216,43 @@ def test_build_results_html_keeps_request_under_service_limit():
     assert "|" not in body
 
 
+def test_build_results_html_folder_is_clickable_file_link():
+    body = email_notifier.build_results_html(
+        "cam.mp4", r"D:\out\CA442 results", EVENTS
+    )
+
+    assert (
+        'Thư mục kết quả: <a href="file:///D:/out/CA442%20results">'
+        "D:\\out\\CA442 results</a>" in body
+    )
+    assert "\n" not in body
+    assert "|" not in body
+
+
+def test_build_results_html_folder_posix_and_unc_paths():
+    posix = email_notifier.build_results_html("v.mp4", "/data/out", [])
+    assert '<a href="file:///data/out">/data/out</a>' in posix
+
+    unc = email_notifier.build_results_html("v.mp4", r"\\srv\share\out", [])
+    assert '<a href="file://srv/share/out">\\\\srv\\share\\out</a>' in unc
+
+
+def test_build_results_html_folder_relative_path_stays_plain_text():
+    body = email_notifier.build_results_html("v.mp4", "outputs/cam", [])
+
+    assert "<a href" not in body
+    assert "outputs/cam" in body
+
+
+def test_build_results_html_folder_http_url_is_linked():
+    body = email_notifier.build_results_html(
+        "v.mp4", "http://172.17.108.169/results/cam", []
+    )
+
+    assert '<a href="http://172.17.108.169/results/cam">http://' in body
+    assert "172.17.108.169/results/cam</a>" in body
+
+
 def test_send_email_returns_empty_response_when_service_does_not_reply(
     monkeypatch,
 ):
