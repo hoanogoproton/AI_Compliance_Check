@@ -12,8 +12,10 @@ service truncates requests that are too long (a large HTML body arrives
 cut off mid-tag, e.g. right at ``<td style="padding:8px 10px;border``),
 so the whole request is budgeted to stay under ``MAX_MESSAGE_BYTES``:
 when not every event row fits, the first rows are embedded and a note
-points to the output folder for the full list. Body text is kept
-accent-free (plain ASCII) to avoid encoding issues on the mail server.
+points to the output folder for the full list. Body text is Vietnamese
+with diacritics, encoded as UTF-8 (the HTML declares ``charset="utf-8"``);
+because accented characters take 2-3 bytes each, the budget is computed
+on UTF-8 byte lengths.
 
 Edit the constants below to point at a different server or factory.
 """
@@ -40,7 +42,7 @@ _SUBJECT_RESERVE = 256
 _DASH = "-"
 _MORE_PARA = (
     '<p style="color:#c0392b;font-size:12px;">'
-    "+ __N__ su kien khac - xem thu muc ket qua.</p>"
+    "+ __N__ sự kiện khác - xem thư mục kết quả.</p>"
 )
 
 _TEMPLATE = (
@@ -48,22 +50,22 @@ _TEMPLATE = (
     '<body style="padding:10px;font-family:Arial,Helvetica,sans-serif;'
     'font-size:13px;">'
     '<div style="background:#0b4f9e;color:#fff;padding:10px 12px;'
-    'font-weight:bold;">BAO CAO KET QUA XU LY VIDEO'
-    " - Nha may __FACTORY__</div>"
-    '<p style="margin:10px 0;">Video <b>__VIDEO__</b>: ghi nhan '
-    '<b style="color:#c0392b;">__TOTAL__ su kien</b>.</p>'
+    'font-weight:bold;">BÁO CÁO KẾT QUẢ XỬ LÝ VIDEO'
+    " - Nhà máy __FACTORY__</div>"
+    '<p style="margin:10px 0;">Video <b>__VIDEO__</b>: ghi nhận '
+    '<b style="color:#c0392b;">__TOTAL__ sự kiện</b>.</p>'
     '<table cellpadding="4" cellspacing="0" border="1"'
     ' style="border-collapse:collapse;">'
     '<tr bgcolor="#0b4f9e" style="color:#fff;">'
-    "<th>STT</th><th>Ma su kien</th><th>Hanh vi</th>"
-    "<th>Bat dau (s)</th><th>Ket thuc (s)</th><th>Thoi luong (s)</th></tr>"
+    "<th>Mã sự kiện</th><th>Hành vi</th>"
+    "<th>Bắt đầu (s)</th><th>Kết thúc (s)</th></tr>"
     "__ROWS__"
     "</table>"
     "__MORE_PARA__"
-    "<p>Thoi gian xu ly: <b>__TIME__</b><br>"
-    "Thu muc ket qua: __FOLDER__</p>"
-    '<p style="color:#999;font-size:11px;">Email tu dong - khong tra loi.'
-    " - Nha may __FACTORY__</p>"
+    "<p>Thời gian xử lý: <b>__TIME__</b><br>"
+    "Thư mục kết quả: __FOLDER__</p>"
+    '<p style="color:#999;font-size:11px;">Email tự động - không trả lời.'
+    " - Nhà máy __FACTORY__</p>"
     "</body></html>"
 )
 
@@ -128,21 +130,16 @@ def _fmt_seconds(value) -> str:
         return _DASH
 
 
-def _event_row(index: int, event: dict) -> str:
+def _event_row(event: dict) -> str:
     behavior = str(event.get("behavior") or "").strip() or _DASH
     start = _fmt_seconds(event.get("start_time_sec"))
     end = _fmt_seconds(event.get("end_time_sec"))
-    try:
-        duration = f"{float(event['end_time_sec']) - float(event['start_time_sec']):g}"
-    except (TypeError, ValueError, KeyError):
-        duration = _DASH
     return (
-        f"<tr><td>{index}</td>"
+        "<tr>"
         f"<td>{_esc(event.get('event_id'))}</td>"
         f"<td>{_esc(behavior)}</td>"
         f"<td>{start}</td>"
         f"<td>{end}</td>"
-        f"<td>{duration}</td>"
         "</tr>"
     )
 
@@ -184,14 +181,14 @@ def build_results_html(
         - _SUBJECT_RESERVE
     )
     used = len(head.encode("utf-8")) + len(tail.encode("utf-8"))
-    # Reserve room for the "+N su kien khac" note up-front so the note can
+    # Reserve room for the "+N sự kiện khác" note up-front so the note can
     # always be appended whenever rows have to be dropped.
     row_budget = budget - len(
         _MORE_PARA.replace("__N__", "99999").encode("utf-8")
     )
     rows: list[str] = []
-    for index, event in enumerate(valid, 1):
-        row = _event_row(index, event)
+    for event in valid:
+        row = _event_row(event)
         size = len(row.encode("utf-8"))
         if rows and used + size > row_budget:
             break

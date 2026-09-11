@@ -154,10 +154,13 @@ def test_build_results_html_layout():
     assert ">3.2<" in body
     assert ">10<" in body
     assert ">12.4<" in body
-    assert ">1.7<" in body
-    assert ">2.4<" in body
     assert ">-<" in body
-    assert ">2 " in body and "su kien" in body
+    assert ">2 sự kiện" in body
+    # STT and duration columns are removed.
+    assert "STT" not in body
+    assert "Thời lượng" not in body
+    assert ">1.7<" not in body
+    assert ">2.4<" not in body
 
 
 def test_build_results_html_escapes_and_sanitizes_pipes():
@@ -173,7 +176,7 @@ def test_build_results_html_escapes_and_sanitizes_pipes():
 
 def test_build_results_html_defaults_to_current_time():
     body = email_notifier.build_results_html("v.mp4", "D:/out", [])
-    assert "Thoi gian xu ly" in body
+    assert "Thời gian xử lý" in body
     assert "v.mp4" in body
 
 
@@ -184,9 +187,10 @@ def test_build_results_html_short_list_shows_every_row():
         for i in range(1, 4)
     ]
     body = email_notifier.build_results_html("cam.mp4", "D:/out", events)
-    assert "su kien khac" not in body
+    assert "sự kiện khác" not in body
     for i in range(1, 4):
-        assert f"<td>{i}</td>" in body
+        assert f"<td>{i}</td>" in body  # event_id cell, one per row
+        assert f"be {i}" in body
 
 
 def test_build_results_html_keeps_request_under_service_limit():
@@ -199,13 +203,13 @@ def test_build_results_html_keeps_request_under_service_limit():
     body = email_notifier.build_results_html(
         video, rf"D:\out\{Path(video).stem}", events
     )
-    subject = f"Ket qua xu ly - {video}"
+    subject = f"Kết quả xử lý - {video}"
     total = (
         len(f"[SendEmail_KTTT]{email_notifier.FACTORY}|{subject}|".encode("utf-8"))
         + len(body.encode("utf-8"))
     )
     assert total <= email_notifier.MAX_MESSAGE_BYTES
-    assert "su kien khac" in body
+    assert "sự kiện khác" in body
     assert "EVT-001" in body
     assert "EVT-200" not in body
     assert "\n" not in body
@@ -263,7 +267,7 @@ def test_send_email_roundtrip_delivers_full_message(monkeypatch):
     body = email_notifier.build_results_html(
         "roundtrip.mp4", r"D:\out\roundtrip", EVENTS * 50
     )
-    subject = "Ket qua xu ly - roundtrip.mp4"
+    subject = "Kết quả xử lý - roundtrip.mp4"
     message, response = email_notifier.send_email(subject, body)
     thread.join(5)
     server_side.close()
