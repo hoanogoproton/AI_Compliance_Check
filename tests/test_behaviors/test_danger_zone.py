@@ -196,3 +196,78 @@ def test_danger_zone_multiple_zones_accumulate():
     assert r.metadata["zone"] == "zone_a"
     assert r.metadata["triggered_zones"] == ["zone_a", "zone_b"]
     assert r.metadata["inside"]
+
+
+def test_danger_zone_disappear_expires_zone():
+    zone = _make_zone()
+    behavior = DangerZoneBehavior(
+        {"min_enter_frames": 1, "min_exit_frames": 2, "alert_flash_frames": 2}, zones=[zone]
+    )
+    inside = _make_person(1, (40, 40, 60, 60))
+
+    events = behavior.process_frame([inside], None, 0, 0.0)
+    assert len(events) == 1
+    assert behavior.current_triggered_zones == {"test_zone"}
+
+    behavior.process_frame([inside], None, 1, 0.033)
+    assert behavior.current_triggered_zones == {"test_zone"}
+
+    events = behavior.process_frame([], None, 2, 0.066)
+    assert events == []
+    assert behavior.current_triggered_zones == {"test_zone"}
+    assert not behavior._track_in_zone[1]
+
+    behavior.process_frame([], None, 3, 0.099)
+    assert behavior.current_triggered_zones == set()
+
+    behavior.process_frame([], None, 4, 0.132)
+    assert behavior.current_triggered_zones == set()
+    assert 1 not in behavior._track_in_zone
+    assert 1 not in behavior._last_alert_frame
+    assert 1 not in behavior._inside_zones
+
+
+def test_danger_zone_long_gone_no_red():
+    zone = _make_zone()
+    behavior = DangerZoneBehavior(
+        {"min_enter_frames": 1, "min_exit_frames": 2, "alert_flash_frames": 3}, zones=[zone]
+    )
+    inside = _make_person(1, (40, 40, 60, 60))
+
+    behavior.process_frame([inside], None, 0, 0.0)
+    assert behavior.current_triggered_zones == {"test_zone"}
+
+    for f in range(1, 51):
+        behavior.process_frame([], None, f, f * 0.033)
+
+    assert behavior.current_triggered_zones == set()
+    assert 1 not in behavior._track_in_zone
+    assert 1 not in behavior._in_zone_counter
+    assert 1 not in behavior._outside_counter
+    assert 1 not in behavior._alerted
+    assert 1 not in behavior._inside_zones
+    assert 1 not in behavior._last_alert_frame
+    assert 1 not in behavior._alert_zones
+    assert 1 not in behavior._last_seen_frame
+
+
+def test_danger_zone_flicker_inside_no_realert():
+    zone = _make_zone()
+    behavior = DangerZoneBehavior(
+        {"min_enter_frames": 1, "min_exit_frames": 3, "alert_flash_frames": 5}, zones=[zone]
+    )
+    inside = _make_person(1, (40, 40, 60, 60))
+
+    events = behavior.process_frame([inside], None, 0, 0.0)
+    assert len(events) == 1
+    assert behavior.current_triggered_zones == {"test_zone"}
+
+    behavior.process_frame([], None, 1, 0.033)
+    assert behavior.current_triggered_zones == {"test_zone"}
+    assert behavior._alerted[1]
+
+    events = behavior.process_frame([inside], None, 2, 0.066)
+    assert events == []
+    assert behavior._alerted[1]
+    assert behavior._track_in_zone[1]
+    assert behavior.current_triggered_zones == {"test_zone"}

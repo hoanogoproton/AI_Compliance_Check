@@ -82,7 +82,7 @@ pytest tests/ -v
 ```
 python -m gui.app
 python debug_tracks.py --video "videos/1.mp4" --config config/config.yaml
-python cut_video.py "D:\Project Demo\Kho PC\CA442-FB-PC_No2-20260904-081130.mp4" 0 180
+python cut_video.py "D:\Project Demo\DEMO - Nhan dien nguoi\videos\CA444-FB-SSI1-No4\CA444-FB-SSI1-No4-20260911-104908.mp4" 0 300
 
 ## Keypoint classifier (one model per behavior)
 

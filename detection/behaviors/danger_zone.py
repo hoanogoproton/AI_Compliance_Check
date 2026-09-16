@@ -17,11 +17,25 @@ class DangerZoneBehavior(BaseBehavior):
         self._inside_zones: dict[int, set[str]] = {}
         self._last_alert_frame: dict[int, int] = {}
         self._alert_zones: dict[int, list[str]] = {}
+        self._last_seen_frame: dict[int, int] = {}
         self._frame_alert_zones: set[str] = set()
 
     def _validate_params(self):
         if len(self.zones) == 0:
             raise ValueError("danger_zone behavior requires at least one zone")
+
+    def _prune_track(self, tid: int) -> None:
+        for store in (
+            self._in_zone_counter,
+            self._outside_counter,
+            self._track_in_zone,
+            self._alerted,
+            self._inside_zones,
+            self._last_alert_frame,
+            self._alert_zones,
+            self._last_seen_frame,
+        ):
+            store.pop(tid, None)
 
     def is_person_in_alert(self, track_id: int, frame_idx: int) -> bool:
         if self._track_in_zone.get(track_id, False):
@@ -39,11 +53,14 @@ class DangerZoneBehavior(BaseBehavior):
     def process_frame(self, people, frame, frame_idx, timestamp) -> list[Event]:
         self._frame_alert_zones.clear()
         new_events = []
+        seen_tids: set[int] = set()
 
         for person in people:
+            tid = person.track_id
+            seen_tids.add(tid)
+            self._last_seen_frame[tid] = frame_idx
             result = self.detect_person(person, frame, frame_idx, timestamp)
             if result.detected:
-                tid = person.track_id
                 alert_zones = result.metadata.get("triggered_zones", [])
                 self._alerted[tid] = True
                 self._last_alert_frame[tid] = frame_idx
@@ -61,6 +78,16 @@ class DangerZoneBehavior(BaseBehavior):
                 )
                 event.behavior_name = self.name
                 new_events.append(event)
+
+        for tid in list(self._track_in_zone):
+            if tid not in seen_tids and self._track_in_zone[tid]:
+                self._track_in_zone[tid] = False
+                self._in_zone_counter[tid] = 0
+
+        flash_frames = self.params.get("alert_flash_frames", 20)
+        for tid, last_seen in list(self._last_seen_frame.items()):
+            if frame_idx - last_seen > flash_frames:
+                self._prune_track(tid)
 
         for tid in set(self._track_in_zone) | set(self._last_alert_frame):
             if self.is_person_in_alert(tid, frame_idx):
