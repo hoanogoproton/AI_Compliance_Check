@@ -1,13 +1,18 @@
 """
 Folder Watcher: monitor folders listed in a CSV file and automatically run the
 detection pipeline on every NEW video that appears, using that folder's own
-config.
+config. Since the realtime GUI, a row may instead hold a CAMERA ADDRESS
+(stream URL like ``rtsp://user:pass@172.17.108.15:554/cam/realmonitor?channel=1``
+in the folder column): such rows do not get scanned for videos — the watcher
+starts a realtime detection worker for that stream directly (see
+``detection/realtime.py``), reusing the same event/preview protocol.
 
 CSV format (2 required columns + 1 optional):
 
     folder,config[,output_dir]
     D:/CameraDrop/RAI7,config/config_4.yaml
     ./videos/watch_demo,./config/config_3.yaml,./outputs/custom
+    rtsp://user:pass@172.17.108.15:554/cam/realmonitor?channel=1&subtype=0,./config/config_4.yaml
 
 Behavior:
     * Videos already inside a folder when the watcher first sees it are
@@ -38,6 +43,7 @@ import csv
 import inspect
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -78,8 +84,52 @@ def _resolve_path(value: str, base_dirs: list[Path]) -> Path:
     return base_dirs[0] / p
 
 
+def is_camera_source(value: str) -> bool:
+    """True when a CSV "folder" value is a camera stream URL.
+
+    A row holds a realtime camera when the value carries a stream scheme:
+    ``rtsp://``, ``rtsps://``, ``rtsph://`` or ``http(s)://`` — e.g.
+    ``rtsp://user:pass@172.17.108.15:554/cam/realmonitor?channel=1&subtype=0``.
+    Plain folder paths (including ``D:/...`` drive paths) are never cameras.
+    """
+    v = (value or "").strip().lower()
+    return v.startswith(STREAM_URL_PREFIXES)
+
+
+STREAM_URL_PREFIXES = ("rtsp://", "rtsps://", "rtsph://", "http://", "https://")
+
+
+def _camera_name_from_url(url: str) -> str:
+    """Derive a readable camera name from a stream URL.
+
+    Uses the host plus the ``channel`` query parameter when present:
+    ``rtsp://user:pass@172.17.108.15:554/cam/realmonitor?channel=1&subtype=0``
+    -> ``172.17.108.15_ch1`` (port, userinfo and path are ignored).
+    """
+    v = str(url).strip()
+    _, _, rest = v.partition("://")
+    # scheme://userinfo@host:port/path?query -> authority -> host
+    authority = rest.split("/", 1)[0].split("?", 1)[0]
+    if "@" in authority:
+        authority = authority.rsplit("@", 1)[1]
+    host = authority.split(":", 1)[0]
+    if host:
+        name = host
+    else:
+        name = (rest or v).split("/")[-1].split("?")[0] or "camera"
+    m = re.search(r"[?&]channel=(\d+)", v)
+    if m:
+        name = f"{name}_ch{m.group(1)}"
+    return "".join(c if c not in '\\/:*?"<>|' else "_" for c in name) or "camera"
+
+
 def load_watch_csv(csv_path: str | Path) -> tuple[list[dict], list[str]]:
     """Parse the watch CSV (columns: folder,config[,output_dir]).
+
+    A row whose ``folder`` value is a camera address (stream URL or
+    ``host[:port]/path``) describes a REALTIME camera: it is returned with
+    ``is_camera=True`` and the raw address in ``source``; it is not resolved
+    against the filesystem. Folder rows behave exactly as before.
 
     Returns (entries, errors). Relative paths are resolved against the CSV
     file's directory first, then the current working directory.
@@ -111,6 +161,27 @@ def load_watch_csv(csv_path: str | Path) -> tuple[list[dict], list[str]]:
                 errors.append(f"line {line_no}: 'folder' and 'config' are required")
                 continue
 
+            if is_camera_source(folder):
+                key = "camera::" + folder.lower()
+                if key in seen_folders:
+                    errors.append(f"line {line_no}: duplicate camera '{folder}'")
+                    continue
+                seen_folders.add(key)
+                entries.append({
+                    "is_camera": True,
+                    "folder": None,
+                    "source": folder,
+                    "camera_name": _camera_name_from_url(folder),
+                    "config": _resolve_path(config, base_dirs),
+                    "config_raw": config,
+                    "output_dir": (
+                        _resolve_path(output_dir, base_dirs) if output_dir else None
+                    ),
+                    "folder_raw": folder,
+                    "output_raw": output_dir,
+                })
+                continue
+
             folder_path = _resolve_path(folder, base_dirs)
             key = canonical(folder_path)
             if key in seen_folders:
@@ -119,11 +190,15 @@ def load_watch_csv(csv_path: str | Path) -> tuple[list[dict], list[str]]:
             seen_folders.add(key)
 
             entries.append({
+                "is_camera": False,
                 "folder": folder_path,
+                "source": str(folder_path),
+                "camera_name": None,
                 "config": _resolve_path(config, base_dirs),
+                "config_raw": config,
                 "output_dir": _resolve_path(output_dir, base_dirs) if output_dir else None,
                 "folder_raw": folder,
-                "config_raw": config,
+                "output_raw": output_dir,
             })
 
     return entries, errors
@@ -154,23 +229,32 @@ def load_journal(path: str | Path) -> dict:
             data.setdefault("processed", [])
             data.setdefault("errors", {})
             data.setdefault("ignored_initial", {})
+            data.setdefault("cameras", {})
             return data
     except (OSError, json.JSONDecodeError):
         pass
-    return {"processed": [], "errors": {}, "ignored_initial": {}}
+    return {"processed": [], "errors": {}, "ignored_initial": {}, "cameras": {}}
+
+
+_JOURNAL_IO_LOCK = threading.Lock()  # one writer at a time (camera threads + poller)
 
 
 def save_journal(path: str | Path, journal: dict) -> None:
-    """Atomically write the journal (best-effort; failures are logged only)."""
+    """Atomically write the journal (best-effort; failures are logged only).
+
+    Thread-safe: realtime camera threads and the folder-polling thread can
+    both save concurrently, so the temp file must never collide.
+    """
     path = Path(path)
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(path.name + ".tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(journal, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, path)
-    except OSError as e:
-        _log(f"WARNING: could not save journal {path}: {e}")
+    with _JOURNAL_IO_LOCK:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_name(path.name + ".tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(journal, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, path)
+        except OSError as e:
+            _log(f"WARNING: could not save journal {path}: {e}")
 
 
 def load_metadata_events(output_dir: str | Path, video_stem: str) -> list[dict] | None:
@@ -226,6 +310,9 @@ class WatchRunner:
         max_cycles: int | None = None,
         max_retries: int = DEFAULT_MAX_RETRIES,
         send_email: bool = True,
+        camera_fn=None,
+        camera_fps: float = 25.0,
+        camera_max_retries: int = 5,
         pipeline_fn=None,
         event_callback: Callable[[dict], None] | None = None,
         frame_callback: Callable | None = None,
@@ -247,6 +334,13 @@ class WatchRunner:
             Path(journal_path) if journal_path else self.output_base / JOURNAL_NAME
         )
         self.journal = load_journal(self.journal_path)
+
+        # Realtime camera support: one worker thread per camera entry (CSV
+        # rows whose "folder" is a camera address). See _start_cameras.
+        self._camera_fn = camera_fn  # defaults to detection.realtime.run_realtime_camera
+        self.camera_fps = float(camera_fps)
+        self.camera_max_retries = max(1, int(camera_max_retries))
+        self._camera_threads: dict[str, threading.Thread] = {}
 
         # The heavy pipeline import (ultralytics/torch, takes seconds) is
         # deferred until the first video is actually processed, so the
@@ -313,6 +407,9 @@ class WatchRunner:
                         f"'{entry['folder_raw']}': {entry['config']}"
                     )
                 continue
+            if entry.get("is_camera"):
+                valid.append(entry)  # camera address: there is no folder to check
+                continue
             if not entry["folder"].exists():
                 warn_key = f"dir:{canonical(entry['folder'])}"
                 if warn_key not in self.warned:
@@ -330,6 +427,120 @@ class WatchRunner:
             if entry["output_dir"]:
                 bases.add(canonical(entry["output_dir"]))
         self._output_bases = bases
+
+    # -- realtime cameras ------------------------------------------------------
+
+    def _camera_key(self, entry: dict) -> str:
+        return "camera::" + str(entry["source"]).lower()
+
+    def _camera_output_dir(self, entry: dict) -> Path:
+        return entry["output_dir"] or (self.output_base / entry["camera_name"])
+
+    def _start_cameras(self) -> None:
+        """Start (or restart) one realtime worker thread per camera entry.
+
+        A thread that already exited (stream gave up after its retries) is
+        restarted on the next poll cycle, so cameras keep coming back until
+        the watcher itself is stopped or the CSV row is removed.
+        """
+        for entry in self.entries:
+            if not entry.get("is_camera"):
+                continue
+            key = self._camera_key(entry)
+            thread = self._camera_threads.get(key)
+            if thread is not None:
+                if thread.is_alive():
+                    continue
+                self._camera_threads.pop(key, None)
+                self._log(f"CAMERA RESTART: {entry['camera_name']}")
+            self._log(
+                f"CAMERA START: {entry['camera_name']} ({entry['source']}) "
+                f"config: {entry['config_raw']}"
+            )
+            self._emit(
+                "camera_start",
+                key=key,
+                camera_name=entry["camera_name"],
+                source=entry["source"],
+                config=entry["config_raw"],
+                output_dir=str(self._camera_output_dir(entry)),
+            )
+            thread = threading.Thread(
+                target=self._run_camera,
+                args=(entry, key),
+                name=f"camera-{entry['camera_name']}",
+                daemon=True,
+            )
+            self._camera_threads[key] = thread
+            thread.start()
+
+    def _run_camera(self, entry: dict, key: str) -> None:
+        """Body of one camera worker thread (runs run_realtime_camera)."""
+        if self._camera_fn is None:
+            from detection.realtime import run_realtime_camera  # heavy, first use
+
+            self._camera_fn = run_realtime_camera
+        out_dir = self._camera_output_dir(entry)
+
+        def on_event(event: dict) -> None:
+            # The realtime module does not know its watcher key/output —
+            # inject them before journalling and GUI forwarding.
+            event.setdefault("key", key)
+            event.setdefault("camera_name", entry["camera_name"])
+            event.setdefault("output_dir", str(out_dir))
+            self._on_camera_event(event)
+
+        frame_cb = None
+        if self.frame_callback is not None:
+            def frame_cb(frame_idx, frame_rgb, info, _key=key):
+                self.frame_callback(_key, frame_idx, frame_rgb, info)
+
+        try:
+            self._camera_fn(
+                source=entry["source"],
+                config_path=str(entry["config"]),
+                camera_name=entry["camera_name"],
+                model_path=self.model_path,
+                output_dir=str(out_dir),
+                conf=self.conf,
+                iou=self.iou,
+                fps_fallback=self.camera_fps,
+                context_seconds=self.context_seconds,
+                crop_padding=self.crop_padding,
+                debug_keypoints=self.debug_keypoints,
+                send_email=self.send_email,
+                max_retries=self.camera_max_retries,
+                event_callback=on_event,
+                log_callback=self._log,
+                frame_callback=frame_cb,
+                abort_event=self._stop,
+            )
+        except Exception as e:  # noqa: BLE001 — a dead camera must not kill the watcher
+            self._log(f"CAMERA ERROR: {entry['camera_name']} - {e}")
+            self._emit(
+                "camera_error",
+                key=key,
+                camera_name=entry["camera_name"],
+                error=str(e),
+                reconnecting=False,
+            )
+        finally:
+            self._emit("camera_stopped", key=key, camera_name=entry["camera_name"])
+
+    def _on_camera_event(self, event: dict) -> None:
+        """Journal bookkeeping for realtime events + GUI forwarding."""
+        if event.get("type") == "camera_event":
+            rec = self.journal.setdefault("cameras", {}).setdefault(
+                event.get("key", ""), {"camera_name": event.get("camera_name", "")}
+            )
+            rec["camera_name"] = event.get("camera_name", rec.get("camera_name", ""))
+            rec["events_total"] = int(rec.get("events_total", 0)) + 1
+            rec["last_event_at"] = _now()
+            rec["last_behavior"] = event.get("behavior", "")
+            rec["output_dir"] = event.get("output_dir", "")
+            save_journal(self.journal_path, self.journal)
+        etype = event.get("type", "log")
+        self._emit(etype, **{k: v for k, v in event.items() if k != "type"})
 
 
     # -- scanning -----------------------------------------------------------
@@ -364,6 +575,8 @@ class WatchRunner:
 
     def _scan_folders(self) -> None:
         for entry in self.entries:
+            if entry.get("is_camera"):
+                continue  # realtime cameras are handled by _start_cameras
             folder = entry["folder"]
             if not folder.is_dir():
                 continue  # already warned in _load_entries
@@ -688,9 +901,10 @@ class WatchRunner:
     # -- main loop ------------------------------------------------------------
 
     def run_cycle(self) -> None:
-        """One poll: reload CSV, scan folders, process whatever is queued."""
+        """One poll: reload CSV, (re)start cameras, scan folders, process queue."""
         self.entries = self._load_entries()
         self._refresh_output_bases()
+        self._start_cameras()
         self._scan_folders()
         self._process_queue()
 
@@ -705,6 +919,13 @@ class WatchRunner:
             f"| email: {'on' if self.send_email else 'off'}"
         )
         self._log(f"  journal    : {self.journal_path}")
+        self.entries = self._load_entries()
+        cameras = [e for e in self.entries if e.get("is_camera")]
+        for entry in cameras:
+            self._log(
+                f"  camera     : {entry['camera_name']} ({entry['source']}) "
+                f"config: {entry['config_raw']}"
+            )
         self._log("Press Ctrl+C to stop.")
         self._emit(
             "startup",
@@ -715,6 +936,7 @@ class WatchRunner:
             journal_processed=len(self.journal.get("processed", [])),
             journal_errors=len(self.journal.get("errors", {})),
             ignored_initial=ignored,
+            cameras=len(cameras),
         )
         cycles = 0
         try:
@@ -735,6 +957,10 @@ class WatchRunner:
         except KeyboardInterrupt:
             self._log("Interrupted by user (Ctrl+C).")
         finally:
+            # Give the realtime camera threads a moment to notice the stop
+            # request and exit cleanly before the summary is printed.
+            for thread in list(self._camera_threads.values()):
+                thread.join(timeout=3.0)
             self._print_summary()
         return 0
 
@@ -748,6 +974,12 @@ class WatchRunner:
             f"(deleted={self.stats['deleted']}), "
             f"failed={self.stats['failed']}, ignored_existing={ignored}."
         )
+        cams = self.journal.get("cameras", {})
+        if cams:
+            total = sum(int(r.get("events_total", 0)) for r in cams.values())
+            self._log(
+                f"Camera realtime: {len(cams)} camera(s), {total} event(s) in journal."
+            )
         self._log(f"Journal: {self.journal_path}")
         self._emit(
             "stopped",

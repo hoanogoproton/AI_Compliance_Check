@@ -38,6 +38,38 @@ Saves zones into `config.yaml` (or specified `--config` file).
 | `--crop-padding` | 20 | Padding around cropped events |
 | `--debug-keypoints` | False | Export clips with skeleton overlay |
 
+## Realtime cameras (GUI)
+
+`gui/watch_app.py` also runs **realtime cameras**: a CSV row whose `folder`
+column holds a stream URL (Dahua/Hikvision RTSP, `http(s)://`) is detected as
+a camera and processed live with its own config — no files are watched for
+that row.
+
+```csv
+folder,config,output_dir
+rtsp://admin:pass@172.17.108.15:554/cam/realmonitor?channel=1&subtype=0,config/config_4.yaml,R:\Output
+D:\Video\CA857-FB-RAI3-No1,config/config_6.yaml,
+```
+
+* Camera name = URL host + `channel` (`172.17.108.15_ch1` above) — used for
+  the output folder, the table row and the alert email.
+* Mixed CSVs work: folder rows are watched as before, camera rows run live.
+* In the GUI each camera is a table row (FPS / people / event count), the
+  preview can be locked to one camera, and an alert email is sent as soon as
+  an event completes. CLI (`python watch_folders.py ...`) runs cameras too,
+  headless.
+* The `FPS camera` spinbox is the fallback fps used when the stream does not
+  report one (RTSP usually reports 0); it converts seconds-based behavior
+  parameters into frames.
+* Lost streams reconnect automatically with backoff (2→5→10→30 s); the row
+  shows `Mất kết nối`. Events are exported from a rolling frame buffer
+  (`context_seconds` before the event), written to
+  `<camera>_events.jsonl` + `<camera>_metadata.json/.csv` in the camera
+  output folder.
+
+Smoke check without a real camera: `python _smoke_camera.py`.
+
+
 ## Folder watcher (auto process NEW videos)
 
 Create `watch_folders.csv` with columns `folder,config` (optional third column

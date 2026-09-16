@@ -817,6 +817,18 @@ def fetch_all_from_csv(
     results: list[dict] = []
 
     for entry in entries:
+        if entry.get("is_camera"):
+            # Dòng camera realtime (địa chỉ RTSP/IP trong cột folder): video
+            # ghi hình không nằm trong Surveillance Station theo tên này.
+            name = entry.get("camera_name") or entry.get("source", "camera")
+            log(
+                f"[fetch] {name}: bỏ qua — dòng camera realtime "
+                f"(không tải video giờ trước từ Surveillance Station)."
+            )
+            results.append(
+                {"camera": name, "status": "skipped", "folder": entry.get("source", "")}
+            )
+            continue
         folder = Path(entry["folder"])
         camera = folder.name
 

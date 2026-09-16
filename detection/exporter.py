@@ -307,6 +307,39 @@ def export_single_event(
     behavior_prefix = f"{behavior_name}_" if behavior_name else ""
     clip_path = output_dir / f"{video_stem}_{behavior_prefix}event_{event_id}_track_{event.track_id}.mp4" if video_stem else output_dir / f"{behavior_prefix}event_{event_id}_track_{event.track_id}.mp4"
 
+    metadata_event = _event_metadata(
+        event, event_id, first_frame, last_frame, fps, str(clip_path.name)
+    )
+
+    def get_frame(_f_idx):
+        ret, frame = cap.read()
+        return frame if ret else None
+
+    def frame_data_lookup(f_idx):
+        return all_frames_data.get(f_idx, {})
+
+    try:
+        _write_cropped_clip(
+            get_frame,
+            range(first_frame, last_frame + 1),
+            event,
+            event_id,
+            frame_data_lookup,
+            clip_path,
+            fps,
+            padding=padding,
+            debug_keypoints=debug_keypoints,
+            zone_export_info=zone_export_info,
+            crop_region=crop_region,
+        )
+    finally:
+        cap.release()
+
+    return metadata_event
+
+def _event_metadata(event, event_id, first_frame, last_frame, fps, clip_name):
+    """Build the per-event metadata dict shared by both clip exporters."""
+    behavior_name = getattr(event, "behavior_name", "")
     hand_side = "none"
     if event.hand_sides:
         hand_counts = {}
@@ -320,7 +353,7 @@ def export_single_event(
     elif fps > 0:
         duration = len(event.frames) / fps
 
-    metadata_event = {
+    return {
         "event_id": event_id,
         "behavior": behavior_name,
         "track_id": event.track_id,
@@ -331,15 +364,35 @@ def export_single_event(
         "duration_sec": round(duration, 3),
         "max_confidence": round(event.max_confidence, 3),
         "hand_side": hand_side,
-        "clip_path": str(clip_path.name),
+        "clip_path": clip_name,
         "clip_start_frame": first_frame,
         "clip_end_frame": last_frame,
         "clip_start_time_sec": round(first_frame / fps, 3) if fps > 0 else 0.0,
         "clip_end_time_sec": round(last_frame / fps, 3) if fps > 0 else 0.0,
     }
 
-    cap.set(cv2.CAP_PROP_POS_FRAMES, first_frame)
 
+def _write_cropped_clip(
+    get_frame,
+    frame_range,
+    event,
+    event_id,
+    frame_data_lookup,
+    clip_path,
+    fps,
+    padding=20,
+    debug_keypoints=False,
+    zone_export_info=None,
+    crop_region=None,
+):
+    """Write one steady-cam event clip (crop around the event's track).
+
+    ``get_frame(f_idx)`` returns the BGR frame for ``f_idx`` (None = end of
+    source); ``frame_data_lookup(f_idx)`` returns the per-frame track data
+    ({track_id: {"bbox", "keypoints", "behaviors", ...}}). Shared by the
+    file-based exporter (frames read back from the video) and the realtime
+    buffer exporter (frames decoded from the rolling buffer).
+    """
     writer = None
     debug_writer = None
     last_known_bbox = None
@@ -348,11 +401,12 @@ def export_single_event(
     fixed_crop_size = None
     frame_h, frame_w = 0, 0
     zone_crop_rect = None
+    f_idx = getattr(frame_range, "start", 0)  # used by the error message
 
     try:
-        for f_idx in range(first_frame, last_frame + 1):
-            ret, frame = cap.read()
-            if not ret:
+        for f_idx in frame_range:
+            frame = get_frame(f_idx)
+            if frame is None:
                 break
             if frame_h == 0:
                 frame_h, frame_w = frame.shape[:2]
@@ -365,7 +419,7 @@ def export_single_event(
                 y_end = min(cy + ch, frame_h)
                 frame = frame[cy:y_end, cx:x_end]
 
-            frame_data = all_frames_data.get(f_idx, {})
+            frame_data = frame_data_lookup(f_idx)
             person_data = frame_data.get(event.track_id)
             if person_data is not None:
                 last_known_bbox = person_data["bbox"]
@@ -481,6 +535,73 @@ def export_single_event(
             writer.release()
         if debug_writer is not None:
             debug_writer.release()
-        cap.release()
 
+
+def export_event_clip_from_buffer(
+    event,
+    event_id,
+    frame_buffer,
+    frame_data_cache,
+    output_dir,
+    fps,
+    context_seconds=5,
+    padding=20,
+    debug_keypoints=False,
+    camera_name="camera",
+    zone_export_info=None,
+):
+    """Export one event clip from the realtime rolling frame buffer.
+
+    ``frame_buffer`` is an ordered iterable of ``(frame_idx, jpeg_bytes)``
+    holding the most recent processed frames of a live camera. Context before
+    the event comes from the buffer; there is no future to seek to, so context
+    after the event is limited to the frames processed since it ended.
+
+    Returns the metadata dict, or ``None`` when the event's end frame is no
+    longer buffered (the caller should skip the export). Raises RuntimeError
+    on writer failures, like ``export_single_event``.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    buffer_map = {idx: data for idx, data in frame_buffer}
+    if event.end_frame not in buffer_map:
+        return None
+    context_frames = int(context_seconds * fps)
+    first_frame = max(min(buffer_map), event.start_frame - context_frames)
+    last_frame = min(max(buffer_map), event.end_frame + context_frames)
+
+    behavior_name = getattr(event, "behavior_name", "")
+    behavior_prefix = f"{behavior_name}_" if behavior_name else ""
+    clip_path = output_dir / (
+        f"{camera_name}_{behavior_prefix}event_{event_id}_track_{event.track_id}.mp4"
+    )
+    metadata_event = _event_metadata(
+        event, event_id, first_frame, last_frame, fps, str(clip_path.name)
+    )
+
+    def get_frame(f_idx):
+        data = buffer_map.get(f_idx)
+        if data is None:
+            return None
+        return cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
+
+    def frame_data_lookup(f_idx):
+        return frame_data_cache.get(f_idx, {})
+
+    # crop_region is None on purpose: buffer frames were already cropped at
+    # ingest time (the live loop crops before detection), so the zones and
+    # bboxes stored in frame_data_cache are already in buffer coordinates.
+    _write_cropped_clip(
+        get_frame,
+        range(first_frame, last_frame + 1),
+        event,
+        event_id,
+        frame_data_lookup,
+        clip_path,
+        fps,
+        padding=padding,
+        debug_keypoints=debug_keypoints,
+        zone_export_info=zone_export_info,
+        crop_region=None,
+    )
     return metadata_event

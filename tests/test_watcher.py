@@ -1,4 +1,6 @@
 import json
+import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -152,7 +154,9 @@ def test_is_file_stable(tmp_path):
 def test_journal_round_trip(tmp_path):
     jp = tmp_path / "state.json"
     journal = wf.load_journal(jp)
-    assert journal == {"processed": [], "errors": {}, "ignored_initial": {}}
+    assert journal == {
+        "processed": [], "errors": {}, "ignored_initial": {}, "cameras": {},
+    }
     journal["processed"].append({"video": "x.mp4"})
     wf.save_journal(jp, journal)
     assert wf.load_journal(jp)["processed"][0]["video"] == "x.mp4"
@@ -590,3 +594,145 @@ def test_stop_aborts_current_video_and_reprocesses_next_start(tmp_path):
     assert any(e["type"] == "video_done" for e in events2)
     assert wf.canonical(video) not in runner2.journal.get("interrupted", {})
     assert not any(e["type"] == "video_error" for e in events2)
+
+
+# --------------------------------------------------------------------------
+# Camera rows (realtime workers)
+# --------------------------------------------------------------------------
+
+CAM_URL = "rtsp://admin:pass@172.17.108.15:554/cam/realmonitor?channel=1&subtype=0"
+CAM_KEY = "camera::" + CAM_URL.lower()
+CAM_NAME = "172.17.108.15_ch1"
+
+
+def test_is_camera_source():
+    assert wf.is_camera_source(CAM_URL)
+    assert wf.is_camera_source("RTSP://host/live")
+    assert wf.is_camera_source("http://172.17.108.15/video")
+    assert not wf.is_camera_source("D:/Video/CA927-FB-RAI7-No3")
+    assert not wf.is_camera_source("./videos/watch_demo")
+    assert not wf.is_camera_source("")
+    assert not wf.is_camera_source("172.17.108.15")  # bare IP: not a CSV camera row
+
+
+def test_load_watch_csv_camera_row(tmp_path):
+    cfg = tmp_path / "cfg.yaml"
+    cfg.touch()
+    _write_csv(tmp_path / "w.csv", [f"{CAM_URL},{cfg}"])
+    entries, errors = wf.load_watch_csv(tmp_path / "w.csv")
+    assert errors == []
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["is_camera"] is True
+    assert entry["folder"] is None
+    assert entry["source"] == CAM_URL
+    assert entry["camera_name"] == CAM_NAME  # host + channel from the URL
+    assert entry["config"] == cfg            # config is still resolved + required
+    assert entry["output_dir"] is None
+
+
+def test_load_watch_csv_mixed_rows_and_duplicate_camera(tmp_path):
+    cfg = tmp_path / "cfg.yaml"
+    cfg.touch()
+    folder = tmp_path / "drop"
+    folder.mkdir()
+    _write_csv(
+        tmp_path / "w.csv",
+        [f"{folder},{cfg}", f"{CAM_URL},{cfg}", f"{CAM_URL},{cfg}"],
+    )
+    entries, errors = wf.load_watch_csv(tmp_path / "w.csv")
+    assert len(entries) == 2
+    assert [e["is_camera"] for e in entries] == [False, True]
+    assert len(errors) == 1 and "duplicate" in errors[0]
+
+
+def _make_camera_runner(tmp_path, camera_fn, **runner_kwargs):
+    cfg = tmp_path / "cfg.yaml"
+    cfg.write_text("behaviors: []\n", encoding="utf-8")
+    csv_file = tmp_path / "watch.csv"
+    _write_csv(csv_file, [f"{CAM_URL},{cfg}"])
+    events: list[dict] = []
+    runner = wf.WatchRunner(
+        csv_path=csv_file,
+        poll_interval=0.01,
+        output_dir=tmp_path / "out",
+        journal_path=tmp_path / "state.json",
+        pipeline_fn=lambda *a, **k: None,
+        camera_fn=camera_fn,
+        event_callback=events.append,
+        **runner_kwargs,
+    )
+    return runner, events
+
+
+def test_runner_starts_camera_worker(tmp_path):
+    started = threading.Event()
+
+    def fake_camera(**kwargs):
+        started.set()
+        kwargs["event_callback"]({
+            "type": "camera_status", "camera": "cam",
+            "fps": 25.0, "people": 2, "events_total": 0,
+        })
+        while not kwargs["abort_event"].is_set():
+            time.sleep(0.005)
+
+    runner, events = _make_camera_runner(tmp_path, fake_camera)
+    runner.run_cycle()
+    assert started.wait(timeout=2.0), "camera worker never started"
+    types = [e["type"] for e in events]
+    assert "camera_start" in types
+    deadline = time.time() + 2.0
+    while not any(e["type"] == "camera_status" for e in events) and time.time() < deadline:
+        time.sleep(0.01)  # the status arrives from the worker thread
+    assert "camera_status" in types or any(
+        e["type"] == "camera_status" for e in events
+    )
+    # The watcher injects its own key/output into camera events.
+    status = next(e for e in events if e["type"] == "camera_status")
+    assert status["key"] == CAM_KEY
+    assert status["camera_name"] == CAM_NAME
+    assert Path(status["output_dir"]).name == CAM_NAME
+    runner.stop()
+    runner._camera_threads[CAM_KEY].join(timeout=2.0)
+
+
+def test_runner_camera_event_updates_journal(tmp_path):
+    def fake_camera(**kwargs):
+        kwargs["event_callback"]({
+            "type": "camera_event", "camera": "cam", "behavior": "hand_to_head",
+            "events_total": 1, "event": {"event_id": 1, "behavior": "hand_to_head"},
+        })
+        # returning ends the worker; the runner restarts it on a later cycle
+
+    runner, events = _make_camera_runner(tmp_path, fake_camera)
+    runner.run_cycle()
+    runner._camera_threads[CAM_KEY].join(timeout=2.0)
+    assert not runner._camera_threads[CAM_KEY].is_alive()
+    assert any(e["type"] == "camera_stopped" for e in events)
+    rec = runner.journal["cameras"][CAM_KEY]
+    assert rec["events_total"] == 1
+    assert rec["last_behavior"] == "hand_to_head"
+    assert rec["camera_name"] == CAM_NAME
+    # Next cycle restarts the finished worker (streams keep coming back).
+    runner.run_cycle()
+    assert runner._camera_threads[CAM_KEY].is_alive()
+    runner.stop()
+    runner._camera_threads[CAM_KEY].join(timeout=2.0)
+
+
+def test_runner_stop_aborts_camera_worker(tmp_path):
+    started = threading.Event()
+
+    def fake_camera(**kwargs):
+        started.set()
+        assert kwargs["abort_event"] is runner._stop
+        while not kwargs["abort_event"].is_set():
+            time.sleep(0.005)
+
+    runner, _events = _make_camera_runner(tmp_path, fake_camera)
+    runner.run_cycle()
+    assert started.wait(timeout=2.0)
+    runner.stop()
+    runner._camera_threads[CAM_KEY].join(timeout=2.0)
+    assert not runner._camera_threads[CAM_KEY].is_alive()

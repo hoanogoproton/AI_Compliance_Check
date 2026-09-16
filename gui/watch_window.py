@@ -1,11 +1,13 @@
 """Realtime Vietnamese GUI for the folder watcher (watch_folders.py).
 
-Shows a live status table (one row per video), per-video progress bars, an
-annotated realtime video preview (bounding boxes, keypoints, face landmarks,
-zones) of the video currently being processed, a timestamped log panel and
-Start/Stop controls. The watcher runs in a daemon thread owned by
-``WatchWorker``; its event dicts and preview frames arrive here via queued Qt
-signals, so every handler below runs on the GUI thread.
+Shows a live status table (one row per video OR per realtime camera), per-video
+progress bars / per-camera FPS, an annotated realtime preview (bounding boxes,
+keypoints, face landmarks, zones) of the video being processed or the selected
+live camera, a timestamped log panel and Start/Stop controls. The watcher runs
+in a daemon thread owned by ``WatchWorker``; its event dicts and preview frames
+arrive here via queued Qt signals, so every handler below runs on the GUI
+thread. CSV rows whose "folder" column holds a camera address (rtsp://...) are
+shown as camera rows fed by ``detection/realtime.py``.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
+    QComboBox,
     QDoubleSpinBox,
     QFileDialog,
     QGroupBox,
@@ -30,6 +33,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QSpinBox,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -61,6 +65,9 @@ ST_DONE = "Hoàn tất"
 ST_ERROR = "Lỗi"
 ST_SKIPPED = "Bỏ qua"
 ST_STOPPED = "Đã dừng"
+ST_CONNECTING = "Đang kết nối"
+ST_RUNNING = "Đang chạy"
+ST_RECONNECTING = "Mất kết nối"
 
 NOTE_IGNORED_INITIAL = "Đã có trong thư mục khi bắt đầu"
 NOTE_DELETE_FAILED = "Không xóa được tệp"
@@ -72,7 +79,7 @@ NOTE_STOPPED_MIDWAY = (
 class WatchWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Theo dõi thư mục — Nhận diện hành vi")
+        self.setWindowTitle("Theo dõi thư mục & camera realtime — Nhận diện hành vi")
         self.resize(1080, 700)
 
         self._worker: WatchWorker | None = None
@@ -80,6 +87,8 @@ class WatchWindow(QMainWindow):
         self._bars: dict[str, QProgressBar] = {}
         self._counts = {"processed": 0, "deleted": 0, "failed": 0}
         self._close_after_stop = False
+        self._camera_names: dict[str, str] = {}    # camera key -> display name
+        self._camera_event_counts: dict[str, int] = {}
         self._current_video: str | None = None   # name of the video in progress
         self._last_frame_t: float | None = None  # monotonic ts of last preview frame
         self._ema_frame_dt: float | None = None  # smoothed preview frame interval (s)
@@ -99,8 +108,9 @@ class WatchWindow(QMainWindow):
         root.addWidget(title)
 
         subtitle = QLabel(
-            "Tự động chạy nhận diện cho mọi video mới xuất hiện trong các thư mục "
-            "khai báo trong tệp CSV."
+            "Tự động chạy nhận diện cho mọi video mới trong các thư mục khai báo "
+            "trong tệp CSV, và nhận diện REALTIME cho các dòng camera (địa chỉ "
+            "rtsp:// trong cột folder)."
         )
         subtitle.setObjectName("Subtitle")
         root.addWidget(subtitle)
@@ -163,6 +173,18 @@ class WatchWindow(QMainWindow):
         self.out_btn.clicked.connect(self._browse_output)
         row2.addWidget(self.out_btn)
 
+        row2.addWidget(QLabel("FPS camera:"))
+        self.fps_spin = QSpinBox()
+        self.fps_spin.setRange(1, 120)
+        self.fps_spin.setValue(25)
+        self.fps_spin.setSuffix(" fps")
+        self.fps_spin.setToolTip(
+            "FPS dự phòng cho camera realtime khi luồng RTSP không tự báo fps "
+            "(RTSP thường trả 0). Dùng để quy đổi tham số theo giây của behaviors."
+        )
+        self.fps_spin.setMinimumWidth(110)
+        row2.addWidget(self.fps_spin)
+
         self.fetch_now_btn = QPushButton("Tải video giờ trước ngay")
         self.fetch_now_btn.setToolTip(
             "Tải ngay video của giờ vừa kết thúc cho mọi camera trong tệp CSV."
@@ -188,12 +210,21 @@ class WatchWindow(QMainWindow):
         # -- preview + table + log ---------------------------------------------
         splitter = QSplitter(Qt.Vertical)
 
-        preview_group = QGroupBox("Xem trước — video đang xử lý")
+        preview_group = QGroupBox("Xem trước realtime")
         preview_layout = QVBoxLayout()
         caption_row = QHBoxLayout()
         self.preview_caption = QLabel("Chưa có video đang xử lý")
         self.preview_caption.setObjectName("Subtitle")
         caption_row.addWidget(self.preview_caption, 1)
+        caption_row.addWidget(QLabel("Camera:"))
+        self.preview_camera_combo = QComboBox()
+        self.preview_camera_combo.addItem("Mới nhất", "")
+        self.preview_camera_combo.setToolTip(
+            "Mới nhất: hiển thị frame của camera/video gần nhất.\n"
+            "Chọn một camera để khoá preview vào camera đó."
+        )
+        self.preview_camera_combo.setMinimumWidth(170)
+        caption_row.addWidget(self.preview_camera_combo)
         self.preview_fps_label = QLabel("")
         caption_row.addWidget(self.preview_fps_label)
         preview_layout.addLayout(caption_row)
@@ -205,7 +236,7 @@ class WatchWindow(QMainWindow):
         self.table = QTableWidget()
         self.table.setColumnCount(7)
         self.table.setHorizontalHeaderLabels(
-            ["Video", "Thư mục", "Config", "Trạng thái", "Tiến độ", "Sự kiện", "Ghi chú"]
+            ["Video/Camera", "Nguồn", "Config", "Trạng thái", "FPS/Tiến độ", "Sự kiện", "Ghi chú"]
         )
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Interactive)
@@ -271,6 +302,12 @@ class WatchWindow(QMainWindow):
         self._rows.clear()
         self._bars.clear()
         self._counts = {"processed": 0, "deleted": 0, "failed": 0}
+        self._camera_names.clear()
+        self._camera_event_counts.clear()
+        self.preview_camera_combo.blockSignals(True)
+        self.preview_camera_combo.clear()
+        self.preview_camera_combo.addItem("Mới nhất", "")
+        self.preview_camera_combo.blockSignals(False)
         self.table.setRowCount(0)
         self.log_area.clear()
         self._update_summary()
@@ -289,6 +326,7 @@ class WatchWindow(QMainWindow):
             output_dir=self.out_edit.text().strip() or DEFAULT_OUTPUT_DIR,
             visualize=self.visualize_check.isChecked(),
             send_email=self.email_check.isChecked(),
+            camera_fps=self.fps_spin.value(),
         )
 
         if self.auto_fetch_check.isChecked():
@@ -329,7 +367,7 @@ class WatchWindow(QMainWindow):
         self.stop_btn.setEnabled(running)
         for widget in (
             self.csv_edit, self.csv_btn, self.out_edit, self.out_btn,
-            self.poll_spin, self.visualize_check, self.email_check,
+            self.poll_spin, self.visualize_check, self.email_check, self.fps_spin,
         ):
             widget.setEnabled(not running)
 
@@ -519,6 +557,56 @@ class WatchWindow(QMainWindow):
             self._set_cell(row, COL_STATUS, ST_STOPPED)
             self._set_cell(row, COL_NOTE, NOTE_STOPPED_MIDWAY)
             self._bars[key].setValue(0)
+        elif etype == "camera_start":
+            key = ev["key"]
+            name = ev.get("camera_name", "")
+            self._camera_names[key] = name
+            self._camera_event_counts.setdefault(key, 0)
+            self._add_camera_choice(key, name)
+            row = self._row_for(key, name, ev.get("source", ""), ev.get("config", ""))
+            self._set_cell(row, COL_STATUS, ST_CONNECTING)
+            self._bars[key].setFormat("— FPS")
+            self._bars[key].setValue(0)
+            self._set_cell(row, COL_EVENTS, "0")
+        elif etype == "camera_status":
+            key = ev["key"]
+            row = self._row_for(key, ev.get("camera_name", ""))
+            fps = ev.get("fps", 0.0) or 0.0
+            self._set_cell(row, COL_STATUS, ST_RUNNING)
+            bar = self._bars[key]
+            bar.setFormat(
+                f"{fps:.1f} FPS • {ev.get('people', 0)} người"
+                + (f" • bỏ {ev.get('dropped', 0)} frame" if ev.get("dropped") else "")
+            )
+            bar.setValue(int(max(0, min(100, fps * 100 / 30))))
+            self._set_cell(row, COL_EVENTS, str(ev.get("events_total", 0)))
+        elif etype == "camera_event":
+            key = ev["key"]
+            row = self._row_for(key, ev.get("camera_name", ""))
+            count = int(ev.get("events_total", self._camera_event_counts.get(key, 0) + 1))
+            self._camera_event_counts[key] = count
+            self._set_cell(row, COL_EVENTS, str(count))
+            meta = ev.get("event") or {}
+            self._set_cell(
+                row, COL_NOTE,
+                f"{meta.get('behavior', '')} — {meta.get('detected_at', '')}",
+            )
+        elif etype == "camera_error":
+            key = ev["key"]
+            row = self._row_for(key, ev.get("camera_name", ""))
+            if ev.get("reconnecting"):
+                self._set_cell(row, COL_STATUS, ST_RECONNECTING)
+            else:
+                self._set_cell(row, COL_STATUS, ST_ERROR)
+            self._set_cell(row, COL_NOTE, str(ev.get("error", "")))
+        elif etype == "camera_stopped":
+            key = ev["key"]
+            row = self._row_for(key, ev.get("camera_name", ""))
+            if self._worker is None:
+                # The whole watcher stopped; a running watcher restarts the
+                # camera on its next poll cycle instead.
+                self._set_cell(row, COL_STATUS, ST_STOPPED)
+                self._bars[key].setValue(0)
         elif etype == "stopped":
             self._counts = {
                 "processed": ev.get("processed", 0),
@@ -531,6 +619,9 @@ class WatchWindow(QMainWindow):
 
     def _on_frame_ready(self, key: str, frame_idx: int, frame_rgb, info: dict):
         """Render one annotated frame pushed by the pipeline (GUI thread)."""
+        selected = self.preview_camera_combo.currentData()
+        if selected and key != selected:
+            return  # the user locked the preview onto another camera
         if not self.preview_check.isChecked():
             self._last_frame_t = None  # restart FPS smoothing when re-enabled
             return
@@ -545,7 +636,8 @@ class WatchWindow(QMainWindow):
         self._last_frame_t = now
         self.preview.set_frame(frame_rgb)
 
-        caption = f"{self._current_video or 'Đang xử lý'} — Frame {frame_idx + 1}"
+        name = self._camera_names.get(key) or self._current_video or "Đang xử lý"
+        caption = f"{name} — Frame {frame_idx + 1}"
         people = info.get("people")
         events = info.get("events")
         if people is not None:
@@ -565,6 +657,12 @@ class WatchWindow(QMainWindow):
         self.preview.clear("Chưa có video đang xử lý")
         self.preview_caption.setText("Chưa có video đang xử lý")
         self.preview_fps_label.setText("")
+
+    def _add_camera_choice(self, key: str, name: str):
+        """Add a camera to the preview selector once ('Mới nhất' stays first)."""
+        if self.preview_camera_combo.findData(key) >= 0:
+            return
+        self.preview_camera_combo.addItem(name or key, key)
 
     # -- table / log helpers -------------------------------------------------
 
@@ -617,8 +715,8 @@ class WatchWindow(QMainWindow):
             "Đang chạy",
             "Trình theo dõi đang chạy. Dừng và thoát?\n"
             "(Video đang xử lý sẽ bị dừng NGAY và giữ lại trên đĩa — lần khởi "
-            "động kế tiếp nó sẽ được xử lý tiếp; tiến trình tải video đang "
-            "chạy sẽ bị ngắt.)",
+            "động kế tiếp nó sẽ được xử lý tiếp; các camera realtime sẽ bị "
+            "dừng; tiến trình tải video đang chạy sẽ bị ngắt.)",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
